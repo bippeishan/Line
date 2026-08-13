@@ -1,0 +1,35 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: line-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: line
+      MYSQL_USER: line
+      MYSQL_PASSWORD: line_secret
+      MYSQL_ROOT_PASSWORD: root_secret
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./deploy/mysql/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot_secret"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  api:
+    build: ./backend
+    environment:
+      APP_ENV: development
+      PORT: "8080"
+      DATABASE_URL: line:line_secret@tcp(mysql:3306)/line?parseTime=true
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
