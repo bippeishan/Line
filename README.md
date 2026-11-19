@@ -60,11 +60,15 @@ SHOW TABLES LIKE 'palette_templates';
 
 项目封面与完成照走 `POST /api/media/images`（8 MB 上限、统一压缩为 JPEG、每账号 100 MB 配额）。图解文件走 `POST /api/pattern-files`（PDF/JPEG/PNG/GIF/WebP，12 MB 上传、20 MB 解码上限、每账号 200 MB 配额），写入同一对象存储后由 `GET /api/pattern-files/{id}/file` 鉴权回传，数据库只保存元数据。两类文件在存储中的键分别是 `{id}.jpg` 与 `pattern-{id}.{ext}`。
 
-## 配色模板
+## 配色
 
-`GET /api/palette-templates` 返回官方内置模板（`is_builtin=1`，`user_id` 为空）与当前用户自建模板；`POST` 收藏一组配色，`DELETE /api/palette-templates/{id}` 只能删自建模板。颜色统一为 `#RRGGBB` 大写，单组 2–6 个且不得重复；同名（同一用户或同名内置）返回 409。
+三条入口：照片取色、模板库、算法生成。
 
-前端 `配色推荐` 页顶部是模板库，点卡片直接套用模板颜色；改基准色或切换配色规则会自动切回算法生成。内置 10 组覆盖玩偶、花束、服饰、居家与挂饰。
+**照片取色**：选一张线材照片，前端用 canvas 把图缩到 220px 边长做中位切分量化，得到 6 个主色与占比（接近纯白且占比超过 35% 的桌面背景会被丢弃），照片不上传。勾选 2–4 个颜色后调 `POST /api/palette-suggest`，后端遍历 2–4 色组合并按「色相关系 + 明度层次 + 饱和度结构 + 明暗极端」打分，返回得分最高的 3 组及理由。可直接套用到结果区或存为模板。
+
+**模板库**：`GET /api/palette-templates` 返回官方内置模板（`is_builtin=1`，`user_id` 为空）与当前用户自建模板；`POST` 收藏一组配色，`DELETE /api/palette-templates/{id}` 只能删自建模板。颜色统一为 `#RRGGBB` 大写，单组 2–6 个且不得重复；同名（同一用户或同名内置）返回 409。内置 10 组覆盖玩偶、花束、服饰、居家与挂饰。
+
+**算法生成**：同色系 / 邻近 / 互补 / 三角四条 HSL 规则，配合线材库存按 HSL 距离匹配。改基准色或切换规则会清掉当前套用的模板或组合。
 
 ## 邮件与提醒
 
@@ -98,7 +102,7 @@ cd frontend && npm run test:e2e   # Playwright 端到端（需 API 与 MySQL 已
 | 后端 | `gofmt` 校验、`go vet`、`go build`、`go test -race` |
 | 前端 | `npm ci`、`npm run lint`、`tsc -b`、`vite build` |
 | 迁移 | 临时 MySQL 8.4 容器上执行 `001`–`021`，重跑带守卫的迁移，断言 26 张表、关键字段、10 组内置配色与项目插入冒烟 |
-| 端到端 | 准备数据库、启动 API（含 Mailpit SMTP）与前端，运行 Playwright（登录、图解上传与鉴权回传、提醒邮件投递、配色模板套用与收藏） |
+| 端到端 | 准备数据库、启动 API（含 Mailpit SMTP）与前端，运行 Playwright（登录、图解上传与鉴权回传、提醒邮件投递、配色模板套用与收藏、照片取色到组合） |
 
 在合入前本地复现同一套检查：
 

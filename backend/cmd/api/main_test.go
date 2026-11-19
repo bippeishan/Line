@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -417,5 +418,73 @@ func TestValidatePaletteTemplate(t *testing.T) {
 	tooMany := []string{"#111111", "#222222", "#333333", "#444444", "#555555", "#666666", "#777777"}
 	if _, _, err := validatePaletteTemplate("太多", tooMany); err == nil {
 		t.Fatal("expected more than six colors to fail")
+	}
+}
+
+func TestHexToHSL(t *testing.T) {
+	cases := []struct {
+		hex     string
+		h, s, l float64
+	}{
+		{"#FF0000", 0, 1, 0.5},
+		{"#00FF00", 120, 1, 0.5},
+		{"#0000FF", 240, 1, 0.5},
+		{"#FFFFFF", 0, 0, 1},
+		{"#000000", 0, 0, 0},
+	}
+	for _, tc := range cases {
+		got := hexToHSL(tc.hex)
+		if math.Abs(got.H-tc.h) > 0.01 || math.Abs(got.S-tc.s) > 0.01 || math.Abs(got.L-tc.l) > 0.01 {
+			t.Fatalf("hexToHSL(%s) = %.2f/%.2f/%.2f, want %.2f/%.2f/%.2f", tc.hex, got.H, got.S, got.L, tc.h, tc.s, tc.l)
+		}
+	}
+}
+
+func TestSuggestPalettePrefersLayeredCombination(t *testing.T) {
+	// 米白 + 橙粉 + 深莓：色相邻近、明度分层，应该排在最前。
+	suggestions := suggestPaletteCombinations([]string{"#F6E7DD", "#D97150", "#8E3B4A", "#2B2B2B"}, 3)
+	if len(suggestions) == 0 {
+		t.Fatal("expected at least one suggestion")
+	}
+	top := suggestions[0]
+	if top.Score < 70 {
+		t.Fatalf("expected a strong top suggestion, got %.1f (%s)", top.Score, top.Reason)
+	}
+	if top.Rule != "邻近色" && top.Rule != "同色系" {
+		t.Fatalf("expected a warm adjacent rule, got %s", top.Rule)
+	}
+	if len(top.Colors) != 3 {
+		t.Fatalf("expected a three-color combination to win, got %d", len(top.Colors))
+	}
+	// 由浅到深排列
+	references := make([]float64, 0, len(top.Colors))
+	for _, color := range top.Colors {
+		references = append(references, hexToHSL(color).L)
+	}
+	for index := 1; index < len(references); index++ {
+		if references[index] > references[index-1] {
+			t.Fatalf("expected light-to-dark ordering, got %#v", top.Colors)
+		}
+	}
+}
+
+func TestSuggestPalettePenalizesMuddyCombination(t *testing.T) {
+	muddy := scorePaletteCombination([]string{"#7A7A7A", "#808080", "#787878"})
+	layered := scorePaletteCombination([]string{"#F6E7DD", "#D97150", "#8E3B4A"})
+	if muddy.Score >= layered.Score {
+		t.Fatalf("expected flat greys to score lower: muddy=%.1f layered=%.1f", muddy.Score, layered.Score)
+	}
+	if !strings.Contains(muddy.Reason, "明度") {
+		t.Fatalf("expected the reason to mention lightness, got %s", muddy.Reason)
+	}
+}
+
+func TestSuggestPaletteDetectsComplementary(t *testing.T) {
+	result := scorePaletteCombination([]string{"#F2A377", "#F7E6D5", "#5E8FA8"})
+	if result.Rule != "互补色" && result.Rule != "三角色" && result.Rule != "弱对比" {
+		t.Fatalf("expected a contrasting rule, got %s", result.Rule)
+	}
+	if result.Score <= 0 || result.Score > 100 {
+		t.Fatalf("expected a bounded score, got %.1f", result.Score)
 	}
 }

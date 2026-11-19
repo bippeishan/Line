@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -560,6 +561,7 @@ func main() {
 	mux.HandleFunc("GET /api/insights/monthly", monthlyInsightsHandler(db))
 	mux.HandleFunc("POST /api/projects/{id}/accessories", createProjectAccessoryHandler(db))
 	mux.HandleFunc("DELETE /api/projects/{id}/accessories/{accessoryID}", deleteProjectAccessoryHandler(db))
+	mux.HandleFunc("POST /api/palette-suggest", permissionHandler(db, "project.read", paletteSuggestHandler(db)))
 	mux.HandleFunc("GET /api/palette-templates", permissionHandler(db, "project.read", paletteTemplatesHandler(db)))
 	mux.HandleFunc("POST /api/palette-templates", permissionHandler(db, "project.write", createPaletteTemplateHandler(db)))
 	mux.HandleFunc("DELETE /api/palette-templates/{id}", permissionHandler(db, "project.write", deletePaletteTemplateHandler(db)))
@@ -4057,23 +4059,32 @@ func validatePaletteTemplate(name string, colors []string) (string, []string, er
 	if len([]rune(name)) < 1 || len([]rune(name)) > 60 {
 		return "", nil, fmt.Errorf("名称需要 1 到 60 个字符")
 	}
-	if len(colors) < 2 || len(colors) > 6 {
-		return "", nil, fmt.Errorf("一组配色需要 2 到 6 个颜色")
+	normalized, err := normalizePaletteColors(colors, 2, 6)
+	if err != nil {
+		return "", nil, err
+	}
+	return name, normalized, nil
+}
+
+// normalizePaletteColors 统一大小写并校验 #RRGGBB 与重复色。
+func normalizePaletteColors(colors []string, minCount, maxCount int) ([]string, error) {
+	if len(colors) < minCount || len(colors) > maxCount {
+		return nil, fmt.Errorf("需要 %d 到 %d 个颜色", minCount, maxCount)
 	}
 	normalized := make([]string, 0, len(colors))
 	seen := map[string]bool{}
 	for _, color := range colors {
 		color = strings.ToUpper(strings.TrimSpace(color))
 		if !paletteHexPattern.MatchString(color) {
-			return "", nil, fmt.Errorf("颜色需要 #RRGGBB 格式")
+			return nil, fmt.Errorf("颜色需要 #RRGGBB 格式")
 		}
 		if seen[color] {
-			return "", nil, fmt.Errorf("配色里有重复颜色")
+			return nil, fmt.Errorf("配色里有重复颜色")
 		}
 		seen[color] = true
 		normalized = append(normalized, color)
 	}
-	return name, normalized, nil
+	return normalized, nil
 }
 
 func scanPaletteTemplate(scan func(...any) error) (paletteTemplate, error) {
@@ -4088,6 +4099,239 @@ func scanPaletteTemplate(scan func(...any) error) (paletteTemplate, error) {
 		item.Colors[index] = strings.ToUpper(color)
 	}
 	return item, nil
+}
+
+type paletteSuggestRequest struct {
+	Colors []string `json:"colors"`
+}
+type paletteSuggestion struct {
+	Name   string   `json:"name"`
+	Rule   string   `json:"rule"`
+	Colors []string `json:"colors"`
+	Score  float64  `json:"score"`
+	Reason string   `json:"reason"`
+}
+type hslColor struct {
+	H float64
+	S float64
+	L float64
+}
+
+func hexToHSL(hex string) hslColor {
+	value, err := strconv.ParseUint(strings.TrimPrefix(strings.ToUpper(hex), "#"), 16, 32)
+	if err != nil {
+		return hslColor{}
+	}
+	red := float64((value>>16)&0xFF) / 255
+	green := float64((value>>8)&0xFF) / 255
+	blue := float64(value&0xFF) / 255
+	max := math.Max(red, math.Max(green, blue))
+	min := math.Min(red, math.Min(green, blue))
+	delta := max - min
+	var hue float64
+	switch {
+	case delta == 0:
+		hue = 0
+	case max == red:
+		hue = math.Mod(60*((green-blue)/delta)+360, 360)
+	case max == green:
+		hue = 60*((blue-red)/delta) + 120
+	default:
+		hue = 60*((red-green)/delta) + 240
+	}
+	lightness := (max + min) / 2
+	saturation := 0.0
+	if delta != 0 {
+		saturation = delta / (1 - math.Abs(2*lightness-1))
+	}
+	return hslColor{H: hue, S: saturation, L: lightness}
+}
+
+// hueGap 返回色相在环上的最小距离（0–180）。
+func hueGap(left, right float64) float64 {
+	gap := math.Abs(left - right)
+	if gap > 180 {
+		gap = 360 - gap
+	}
+	return gap
+}
+
+// classifyHue 按最大色相跨度判断配色关系，并给出该关系的加成。
+func classifyHue(gap float64) (string, float64) {
+	switch {
+	case gap <= 15:
+		return "同色系", 6
+	case gap <= 65:
+		return "邻近色", 8
+	case gap <= 105:
+		return "弱对比", 4
+	case gap <= 150:
+		return "三角色", 8
+	default:
+		return "互补色", 10
+	}
+}
+
+// scorePaletteCombination 给一组颜色打分：色相关系 + 明度层次 + 饱和度结构 + 明暗极端惩罚。
+// 返回分值、关系名称与一句可展示的理由。
+func scorePaletteCombination(colors []string) paletteSuggestion {
+	items := make([]hslColor, 0, len(colors))
+	for _, color := range colors {
+		items = append(items, hexToHSL(color))
+	}
+	maxGap := 0.0
+	maxSat, minSat, avgSat, avgLight := 0.0, 1.0, 0.0, 0.0
+	minLight, maxLight := 1.0, 0.0
+	highSaturation := 0
+	for index, item := range items {
+		if item.S > maxSat {
+			maxSat = item.S
+		}
+		if item.S < minSat {
+			minSat = item.S
+		}
+		avgSat += item.S
+		avgLight += item.L
+		if item.L < minLight {
+			minLight = item.L
+		}
+		if item.L > maxLight {
+			maxLight = item.L
+		}
+		if item.S >= 0.55 {
+			highSaturation++
+		}
+		for other := index + 1; other < len(items); other++ {
+			if gap := hueGap(item.H, items[other].H); gap > maxGap {
+				maxGap = gap
+			}
+		}
+	}
+	avgSat /= float64(len(items))
+	avgLight /= float64(len(items))
+	lightSpread := maxLight - minLight
+
+	rule, bonus := classifyHue(maxGap)
+	score := 68 + bonus
+	notes := []string{}
+
+	switch {
+	case lightSpread < 0.10:
+		score -= 28
+		notes = append(notes, "明度几乎一致，容易糊在一起")
+	case lightSpread < 0.22:
+		score -= 10
+		notes = append(notes, "明度差偏小")
+	case lightSpread > 0.72:
+		score -= 8
+		notes = append(notes, "明暗跨度偏大")
+	default:
+		score += 6
+		notes = append(notes, fmt.Sprintf("明度跨度 %.2f，层次清楚", lightSpread))
+	}
+	if avgSat < 0.10 {
+		score -= 16
+		notes = append(notes, "整体饱和度偏低")
+	}
+	if maxSat > 0.9 && avgSat > 0.75 {
+		score -= 10
+		notes = append(notes, "全部高饱和，容易抢眼")
+	}
+	if maxSat-minSat >= 0.30 && highSaturation == 1 {
+		score += 8
+		notes = append(notes, "一个高饱和色做点睛")
+	}
+	if rule == "互补色" && lightSpread < 0.20 {
+		score -= 10
+		notes = append(notes, "互补色但明度接近，对比较硬")
+	}
+	if avgLight < 0.16 {
+		score -= 12
+		notes = append(notes, "整体偏暗")
+	}
+	if avgLight > 0.88 {
+		score -= 8
+		notes = append(notes, "整体偏亮")
+	}
+	if len(items) == 3 {
+		score += 4
+	}
+	if score > 100 {
+		score = 100
+	}
+	if score < 0 {
+		score = 0
+	}
+
+	ordered := orderPaletteByLightness(colors)
+	return paletteSuggestion{
+		Name:   fmt.Sprintf("%s · %d 色", rule, len(items)),
+		Rule:   rule,
+		Colors: ordered,
+		Score:  math.Round(score*10) / 10,
+		Reason: rule + "，" + strings.Join(notes, "，"),
+	}
+}
+
+// orderPaletteByLightness 由浅到深排列，读起来像「底色 → 主色 → 点缀」。
+func orderPaletteByLightness(colors []string) []string {
+	ordered := append([]string(nil), colors...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		return hexToHSL(ordered[left]).L > hexToHSL(ordered[right]).L
+	})
+	return ordered
+}
+
+// suggestPaletteCombinations 遍历 2–4 色组合，返回得分最高的若干组。
+func suggestPaletteCombinations(colors []string, limit int) []paletteSuggestion {
+	maxSize := 4
+	if len(colors) < maxSize {
+		maxSize = len(colors)
+	}
+	suggestions := make([]paletteSuggestion, 0, 16)
+	var walk func(start int, picked []string)
+	walk = func(start int, picked []string) {
+		if len(picked) >= 2 {
+			suggestions = append(suggestions, scorePaletteCombination(append([]string(nil), picked...)))
+		}
+		if len(picked) == maxSize {
+			return
+		}
+		for index := start; index < len(colors); index++ {
+			walk(index+1, append(picked, colors[index]))
+		}
+	}
+	walk(0, nil)
+
+	sort.SliceStable(suggestions, func(left, right int) bool {
+		if suggestions[left].Score == suggestions[right].Score {
+			return len(suggestions[left].Colors) > len(suggestions[right].Colors)
+		}
+		return suggestions[left].Score > suggestions[right].Score
+	})
+	if len(suggestions) > limit {
+		suggestions = suggestions[:limit]
+	}
+	return suggestions
+}
+
+func paletteSuggestHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := requireSignedIn(db, w, r); !ok {
+			return
+		}
+		var input paletteSuggestRequest
+		if json.NewDecoder(r.Body).Decode(&input) != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid request body"})
+			return
+		}
+		colors, err := normalizePaletteColors(input.Colors, 2, 8)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"data": map[string]any{"suggestions": suggestPaletteCombinations(colors, 3), "colors": orderPaletteByLightness(colors)}})
+	}
 }
 
 func paletteTemplatesHandler(db *sql.DB) http.HandlerFunc {

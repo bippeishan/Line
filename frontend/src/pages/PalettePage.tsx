@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Button, Empty, Form, Input, Modal, Popconfirm, Select, Tag, message } from 'antd'
+import { PictureOutlined } from '@ant-design/icons'
+import { Button, Empty, Form, Input, Modal, Popconfirm, Select, Tag, Upload, message } from 'antd'
+import { extractPhotoPalette, type ExtractedColor } from '../photoPalette'
 
 type Yarn = { id: number; name: string; color: string; colorHex: string; remainingGrams: number }
 type Project = { id: number; name: string; palette: string[]; status: string; [key: string]: unknown }
 type PaletteTemplate = { id: number; name: string; style: string; occasion: string; description: string; colors: string[]; isBuiltin: boolean; createdAt: string }
 type TemplateForm = { name: string; style?: string; occasion?: string; description?: string }
+type Suggestion = { name: string; rule: string; colors: string[]; score: number; reason: string }
 
 const styles = ['甜系', '清新', '大地色', '低饱和', '自然', '清爽', '暖调', '糖果', '极简', '明亮']
 const schemes = ['同色系', '邻近色', '互补色', '三角色']
@@ -24,9 +27,16 @@ export default function PalettePage({ onBack }: { onBack: () => void }) {
   const [savingTemplate, setSavingTemplate] = useState(false)
   const [templateForm] = Form.useForm<TemplateForm>()
   const [messageApi, holder] = message.useMessage()
+  const [photoColors, setPhotoColors] = useState<ExtractedColor[]>([])
+  const [photoPreview, setPhotoPreview] = useState('')
+  const [picked, setPicked] = useState<string[]>([])
+  const [extracting, setExtracting] = useState(false)
+  const [suggesting, setSuggesting] = useState(false)
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [appliedColors, setAppliedColors] = useState<string[] | null>(null)
 
   const template = templates.find((item) => item.id === templateId)
-  const colors = template ? template.colors : palette(base, scheme)
+  const colors = appliedColors ?? (template ? template.colors : palette(base, scheme))
   const availableYarns = yarns.filter((item) => /^#[0-9a-fA-F]{6}$/.test(item.colorHex))
   const matches = colors.map((color) => recommendYarn(color, availableYarns))
   const visibleTemplates = styleFilter ? templates.filter((item) => item.style === styleFilter) : templates
@@ -41,14 +51,68 @@ export default function PalettePage({ onBack }: { onBack: () => void }) {
   }, [])
 
   const applyTemplate = (item: PaletteTemplate) => {
+    setAppliedColors(null)
     setTemplateId(item.id)
     if (item.colors[0]) setBase(item.colors[0])
   }
-  const editColor = (value: string) => { setTemplateId(undefined); setBase(value) }
-  const chooseScheme = (value: string) => { setTemplateId(undefined); setScheme(value) }
+  const editColor = (value: string) => { setTemplateId(undefined); setAppliedColors(null); setBase(value) }
+  const chooseScheme = (value: string) => { setTemplateId(undefined); setAppliedColors(null); setScheme(value) }
   const chooseYarn = (id: number) => {
     const yarn = availableYarns.find((item) => item.id === id)
     if (yarn) editColor(yarn.colorHex)
+  }
+
+  const extractFromPhoto = async (file: File) => {
+    if (!file.type.startsWith('image/')) { messageApi.error('请上传照片'); return false }
+    if (file.size > 12 * 1024 * 1024) { messageApi.error('照片不能超过 12 MB'); return false }
+    setExtracting(true)
+    setSuggestions([])
+    try {
+      const result = await extractPhotoPalette(file, 6)
+      setPhotoColors(result.colors)
+      setPhotoPreview(result.preview)
+      setPicked(result.colors.slice(0, 3).map((item) => item.hex))
+      if (result.colors.length < 2) messageApi.warning('只识别出一个主色，换一张光线更均匀的照片试试')
+      else messageApi.success(`识别到 ${result.colors.length} 个主色，勾选 2–4 个再生成组合`)
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : '照片取色失败')
+    } finally {
+      setExtracting(false)
+    }
+    return false
+  }
+  const togglePicked = (hex: string) => {
+    setPicked((current) => {
+      if (current.includes(hex)) return current.filter((item) => item !== hex)
+      if (current.length >= 4) { messageApi.warning('最多选 4 个颜色，先取消一个'); return current }
+      return [...current, hex]
+    })
+  }
+  const suggestFromPhoto = async () => {
+    if (picked.length < 2) { messageApi.warning('至少选择 2 个颜色'); return }
+    setSuggesting(true)
+    try {
+      const response = await fetch('/api/palette-suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ colors: picked }) })
+      const payload = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(payload.error || '生成组合失败')
+      setSuggestions(payload.data.suggestions)
+      if (!payload.data.suggestions.length) messageApi.warning('这几个颜色放在一起不够协调，试试换几个')
+    } catch (error) {
+      messageApi.error(error instanceof Error ? error.message : '生成组合失败')
+    } finally {
+      setSuggesting(false)
+    }
+  }
+  const applySuggestion = (item: Suggestion) => {
+    setAppliedColors(item.colors)
+    setTemplateId(undefined)
+    setBase(item.colors[0])
+    messageApi.success(`已套用「${item.name}」`)
+  }
+  const saveSuggestion = (item: Suggestion) => {
+    setAppliedColors(item.colors)
+    templateForm.setFieldsValue({ name: item.name, style: item.rule })
+    setSaveOpen(true)
   }
 
   const copy = async () => {
@@ -107,6 +171,46 @@ export default function PalettePage({ onBack }: { onBack: () => void }) {
       <p className="eyebrow">COLOR HARMONY</p>
       <h1>配色推荐</h1>
       <p>先挑一组现成模板，再用算法微调；每一组都能落到真实库存上。</p>
+    </section>
+
+    <section className="palette-photo">
+      <header>
+        <div>
+          <p className="eyebrow">PHOTO TO PALETTE</p>
+          <h2>拍一张线材，让它挑颜色</h2>
+          <p className="palette-photo-hint">照片只在本地取色，不会上传；识别出的主色会和你线材库里的库存做匹配。</p>
+        </div>
+        <Upload accept="image/*" showUploadList={false} beforeUpload={extractFromPhoto}>
+          <Button type="primary" icon={<PictureOutlined />} loading={extracting}>{photoColors.length ? '换一张照片' : '上传或拍照'}</Button>
+        </Upload>
+      </header>
+      {photoColors.length > 0 && <>
+        <div className="photo-swatches">
+          {photoPreview && <img className="photo-preview" src={photoPreview} alt="线材照片预览" />}
+          <div className="photo-color-list">{photoColors.map((item) => {
+            const active = picked.includes(item.hex)
+            const matched = recommendYarn(item.hex, availableYarns)
+            return <button key={item.hex} type="button" aria-pressed={active} aria-label={`选择色值 ${item.hex}`} className={active ? 'photo-color active' : 'photo-color'} onClick={() => togglePicked(item.hex)}>
+              <span className="photo-chip" style={{ background: item.hex }} />
+              <b>{item.hex}</b>
+              <small>{Math.round(item.ratio * 100)}% · {matched ? `${matched.yarn.name} ${matched.yarn.remainingGrams}g` : '线材库无匹配'}</small>
+            </button>
+          })}</div>
+        </div>
+        <div className="photo-actions">
+          <Button type="primary" onClick={suggestFromPhoto} loading={suggesting} disabled={picked.length < 2}>生成配色组合（已选 {picked.length}）</Button>
+          <span>从勾选的颜色里挑 2–4 个，按色相、明度层次与饱和度结构打分。</span>
+        </div>
+        {suggestions.length > 0 && <div className="suggestion-list">{suggestions.map((item) => <article key={item.name + item.colors.join('-')} className="suggestion">
+          <div className="suggestion-head"><b>{item.name}</b><Tag color={item.score >= 80 ? 'green' : item.score >= 65 ? 'gold' : 'default'}>{item.score.toFixed(1)} 分</Tag></div>
+          <div className="suggestion-colors">{item.colors.map((color) => <span key={color} style={{ background: color }} title={color}>{color}</span>)}</div>
+          <p>{item.reason}</p>
+          <div className="suggestion-actions">
+            <Button size="small" onClick={() => applySuggestion(item)}>套用到下方</Button>
+            <Button size="small" type="text" onClick={() => saveSuggestion(item)}>存为模板</Button>
+          </div>
+        </article>)}</div>}
+      </>}
     </section>
 
     <section className="palette-templates">
