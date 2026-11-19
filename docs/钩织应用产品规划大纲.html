@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>钩织应用产品规划大纲 · 线禾</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;500;600;700&display=swap');
+      :root { --ink:#25342c; --paper:#f8f4eb; --clay:#c86445; --moss:#6a8065; --sand:#ecdfcc; --line:rgba(37,52,44,.16); }
+      * { box-sizing:border-box; } html { scroll-behavior:smooth; } body { margin:0; color:var(--ink); background:radial-gradient(circle at 90% 0,#f5ddc4 0,transparent 26rem),var(--paper); font:15px/1.85 'Noto Serif SC',serif; }
+      .page { width:min(1120px,calc(100% - 48px)); margin:0 auto; } header { padding:68px 0 42px; border-bottom:1px solid var(--ink); display:grid; grid-template-columns:1.3fr .7fr; gap:32px; } .kicker { margin:0 0 20px; color:var(--clay); font:11px 'DM Mono',monospace; letter-spacing:1.5px; } h1,h2,h3,p { margin-top:0; } h1 { margin-bottom:20px; font-size:clamp(2.7rem,6vw,5.4rem); line-height:1.08; letter-spacing:-.12em; font-weight:600; } .lead { max-width:660px; margin:0; font-size:18px; line-height:1.9; color:#4a594f; } .meta { align-self:end; padding:20px; border:1px solid var(--line); background:rgba(255,255,255,.34); } .meta dt { margin-top:15px; color:#728078; font:10px 'DM Mono',monospace; letter-spacing:1px; text-transform:uppercase; } .meta dt:first-child { margin-top:0; } .meta dd { margin:2px 0 0; font-size:14px; }
+      .summary { display:grid; grid-template-columns:repeat(3,1fr); border-bottom:1px solid var(--line); } .summary div { padding:26px 24px 30px; border-right:1px solid var(--line); } .summary div:last-child { border:0; } .summary b { display:block; margin-bottom:9px; color:var(--clay); font:10px 'DM Mono',monospace; letter-spacing:1px; } .summary span { font-size:16px; font-weight:600; }
+      main { padding:56px 0 80px; } section { margin:0 0 64px; } .section-header { display:flex; align-items:baseline; gap:18px; margin-bottom:24px; } .num { color:var(--clay); font:15px 'DM Mono',monospace; } h2 { font-size:30px; line-height:1.3; letter-spacing:-.07em; } h3 { margin:26px 0 10px; font-size:19px; letter-spacing:-.04em; } .intro { max-width:800px; color:#506056; } table { width:100%; border-collapse:collapse; background:rgba(255,255,255,.35); font-size:14px; } th { background:var(--ink); color:#f9f2e8; font-weight:500; text-align:left; } th,td { padding:15px 16px; vertical-align:top; border:1px solid var(--line); } td:first-child { font-weight:600; } ul { padding-left:1.35rem; } li { margin:8px 0; } .principles { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; } .principle { padding:19px 20px; border-left:3px solid var(--clay); background:#f0e5d7; } .principle b { display:block; margin-bottom:3px; } .layers { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; } .layer { padding:24px; min-height:270px; border:1px solid var(--line); background:#fcf9f1; } .layer:nth-child(1) { border-top:4px solid var(--moss); } .layer:nth-child(2) { border-top:4px solid #b58059; } .layer:nth-child(3) { border-top:4px solid var(--clay); } .layer .letter { color:#728078; font:11px 'DM Mono',monospace; letter-spacing:1px; } .layer h3 { margin-top:8px; } .layer p { margin:10px 0; font-size:14px; } .layer strong { font-weight:600; } .note { padding:22px 24px; border:1px solid #d5bca4; background:#f6e8d9; color:#4b4037; } .roadmap tr td:first-child { white-space:nowrap; color:var(--clay); } footer { padding:22px 0 40px; border-top:1px solid var(--line); color:#758077; font:11px 'DM Mono',monospace; }
+      @media (max-width:720px) { .page { width:min(100% - 32px,1120px); } header { padding:44px 0 32px; grid-template-columns:1fr; } .summary,.layers,.principles { grid-template-columns:1fr; } .summary div { border-right:0; border-bottom:1px solid var(--line); } .summary div:last-child { border-bottom:0; } main { padding-top:42px; } section { margin-bottom:46px; } .section-header { gap:11px; } h2 { font-size:26px; } table { display:block; overflow-x:auto; white-space:normal; } th,td { min-width:145px; } }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header>
+        <div>
+          <p class="kicker">PRODUCT OUTLINE · CROCHET APP</p>
+          <h1>钩织应用<br />产品规划大纲</h1>
+          <p class="lead">从钩织计算器到图解创作与社区的产品路线。面向钩织新手、进阶爱好者、图解作者与社群主理人，构建覆盖创作、学习、管理和交流的一体化钩织工作台。</p>
+        </div>
+        <dl class="meta"><dt>版本</dt><dd>产品规划初稿</dd><dt>日期</dt><dd>2026 年 8 月</dd><dt>产品名</dt><dd>线禾</dd></dl>
+      </header>
+      <div class="summary"><div><b>PRIORITY</b><span>计算 + 进度 + 阅读</span></div><div><b>CORE VALUE</b><span>降低钩织过程中的出错与遗忘</span></div><div><b>BUSINESS</b><span>工具会员、图解交易、课程与材料</span></div></div>
+      <main>
+        <section>
+          <div class="section-header"><span class="num">01</span><h2>产品定位与用户</h2></div>
+          <p class="intro">将零散的钩织工具、图解、材料信息和社群互动整合为一款长期可使用的创作助手。它不只解决“怎么算”，也帮助用户完成“怎么钩、钩到哪、还缺什么、如何分享或售卖”。</p>
+          <h3>核心用户</h3>
+          <table><thead><tr><th>用户类型</th><th>典型需求</th><th>产品机会</th></tr></thead><tbody>
+            <tr><td>新手</td><td>学针法、看懂图解、避免数错</td><td>分步教程、符号词典、行数提醒与错误排查</td></tr>
+            <tr><td>爱好者</td><td>管理多个作品、调整尺寸与配色</td><td>项目工作台、计算器、材料库存和图解标注</td></tr>
+            <tr><td>图解作者</td><td>制作、发布和售卖规范图解</td><td>图解编辑器、PDF 导出、水印、付费与数据统计</td></tr>
+            <tr><td>社群主理人</td><td>沉淀内容、带动打卡与转化</td><td>挑战活动、作品库、会员内容和私域工具</td></tr>
+          </tbody></table>
+          <h3>产品原则</h3>
+          <div class="principles"><div class="principle"><b>高频优先</b>先覆盖每次开工、持续钩织和停工恢复时都会出现的问题。</div><div class="principle"><b>数据沉淀</b>项目、线材、图解和成品记录应持续留在用户账户中。</div><div class="principle"><b>创作友好</b>为图解作者保留清晰的署名、授权、水印与收入能力。</div><div class="principle"><b>工具可信</b>计算结果必须可解释、可复核，并提供异常提示。</div></div>
+        </section>
+        <section>
+          <div class="section-header"><span class="num">02</span><h2>功能全景</h2></div>
+          <p class="intro">采用“工具层 → 内容与学习层 → 社区与交易层”的递进结构：工具建立使用习惯，内容形成差异化，社区和交易放大留存与收入。</p>
+          <div class="layers">
+            <article class="layer"><span class="letter">A · MVP FOCUS</span><h3>基础工具层</h3><p><strong>钩织计算器：</strong>环形起针、加针减针、行数、密度、尺寸与用线量估算。</p><p><strong>项目进度：</strong>当前行数、步骤勾选、断点笔记、计时、语音/快捷计数。</p><p><strong>材料与库存：</strong>线材批次、余量、针号、辅料、缺料提醒与作品成本。</p></article>
+            <article class="layer"><span class="letter">B · DIFFERENTIATION</span><h3>图解与学习层</h3><p><strong>图解阅读器：</strong>导入 PDF/图片，放大、标注、行高亮、术语对照与 OCR。</p><p><strong>图解生成器：</strong>文字针法转标准图表，可视化编辑，导出高清 PDF/长图。</p><p><strong>AI 助手：</strong>逐行解释、尺寸改版、材料替代、结构建议与错误排查。</p></article>
+            <article class="layer"><span class="letter">C · ECOSYSTEM</span><h3>社区与商业层</h3><p><strong>图解库：</strong>发布、试读、购买、更新通知、授权分级和作者主页。</p><p><strong>作品社区：</strong>打卡、同款作品、求助帖、主题圈与阶段挑战。</p><p><strong>创作者经营：</strong>定价、优惠券、订单与收入统计、会员内容和防盗水印。</p></article>
+          </div>
+        </section>
+        <section>
+          <div class="section-header"><span class="num">03</span><h2>关键功能清单</h2></div>
+          <h3>3.1 钩织计算器</h3><ul><li><b>起针与形状：</b>魔法环、圆形、椭圆形、平片、底部与常见立体结构的起针及每行针数。</li><li><b>加减针与尺寸：</b>根据目标尺寸、密度和现有图解，推算加减针节奏、行数和成品尺寸。</li><li><b>材料估算：</b>按线材克重、长度、针号和目标大小估算用线量，支持余线预警。</li><li><b>单位与参数：</b>厘米/英寸、线重、针号换算，并保存用户常用密度样本。</li></ul>
+          <h3>3.2 项目与材料工作台</h3><ul><li><b>项目卡片：</b>记录名称、封面、关联图解、目标尺寸、针号、线材、当前状态与完成时间。</li><li><b>进度执行：</b>行数计数、分段计时、步骤清单、关键行提醒、断点和照片笔记。</li><li><b>库存联动：</b>从库存挑选线材；项目消耗自动扣减；显示批次、剩余量和补货提醒。</li><li><b>成本核算：</b>汇总线材、辅料和工时，服务于接单定价与成品售卖。</li></ul>
+          <h3>3.3 图解、AI 与内容</h3><ul><li><b>图解阅读：</b>支持 PDF、图片与长图；局部标记、行高亮、符号词典和术语翻译。</li><li><b>图解创作：</b>文字针法转图表，圆形/片状/玩偶模板，拖放编辑、配色与编号。</li><li><b>智能问答：</b>解释“这一行怎么钩”、诊断针数不一致、建议尺寸和线材替代方案。</li><li><b>成品与教学：</b>作品展示、短视频针法库、入门路径、挑战计划与课程。</li></ul>
+          <h3>3.4 我的线材、我的工具与配色推荐</h3><ul><li><b>我的线材：</b>建立个人线材库，支持照片、名称、品牌、颜色、材质、粗细与股数录入；可按属性检索、筛选和关联项目。后续根据图解的线重、材质、颜色与用量要求，从用户自有线材中推荐合适候选，并说明匹配依据与差异。</li><li><b>我的工具：</b>建立个人工具库，支持照片、名称、类型与粗细录入；项目可关联已拥有的钩针、棒针及辅助工具，减少重复购置和针号遗漏。</li><li><b>配色推荐：</b>提供独立配色推荐页，按同色系、邻近色、互补色、三角色等色彩关系，为用户展示每套 3 种颜色搭配；支持以已有线材颜色为起点筛选可落地的方案。</li></ul>
+        </section>
+        <section>
+          <div class="section-header"><span class="num">04</span><h2>推荐路线图</h2></div>
+          <div class="note">首发聚焦“项目进度 + 计算器 + 图解阅读”。这三项既有明确痛点和较高使用频率，也能够积累后续图解生成、推荐和交易所需的数据。</div>
+          <table class="roadmap"><thead><tr><th>阶段</th><th>交付重点</th><th>目标</th></tr></thead><tbody><tr><td>阶段一：MVP</td><td>行数计数、钩织计算、项目管理、我的线材、我的工具</td><td>验证高频使用与首批留存</td></tr><tr><td>阶段二：效率</td><td>图解导入标注、符号词典、配色推荐、PDF 导出、作品打卡</td><td>建立个人作品和图解资产</td></tr><tr><td>阶段三：差异化</td><td>文字转图解、AI 图解问答、图解与自有线材智能匹配、作者发布与售卖</td><td>形成专业能力与初步变现</td></tr><tr><td>阶段四：生态</td><td>社区、课程、材料推荐、创作者经营工具</td><td>扩大内容供给和交易规模</td></tr></tbody></table>
+        </section>
+        <section>
+          <div class="section-header"><span class="num">05</span><h2>商业化设计</h2></div>
+          <ul><li><b>会员订阅：</b>高级计算、云同步、无水印导出、扩展项目管理和 AI 使用额度。</li><li><b>单次付费：</b>高级图解、导出包、专业模板、尺寸改版和定制服务。</li><li><b>创作者交易：</b>图解售卖、课程、材料包和商用授权；平台收取服务费。</li><li><b>材料合作：</b>根据项目材料清单提供线材、钩针与辅料推荐，并获得联盟分成。</li></ul>
+        </section>
+        <section>
+          <div class="section-header"><span class="num">06</span><h2>下一步建议</h2></div>
+          <ol><li>选择一个明确的首发人群，例如“钩织玩偶爱好者”或“新手钩织入门用户”，避免首期覆盖全部品类。</li><li>用 10–20 位目标用户访谈验证：最常数错的场景、最常用的图解格式，以及愿意付费的功能。</li><li>先制作可点击原型，重点测试“创建项目 → 导入图解 → 计数/提醒 → 完成打卡”的完整闭环。</li><li>为计算规则和图解符号建立可配置的基础数据模型，为后续 AI 与创作者平台预留接口。</li></ol>
+        </section>
+      </main>
+      <footer>线禾 · 钩织应用产品规划大纲 · 2026.08</footer>
+    </div>
+  </body>
+</html>

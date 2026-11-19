@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS user_permissions (
+  user_id BIGINT UNSIGNED NOT NULL,
+  permission VARCHAR(80) NOT NULL,
+  allowed BOOLEAN NOT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, permission),
+  CONSTRAINT fk_user_permissions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

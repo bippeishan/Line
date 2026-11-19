@@ -12,7 +12,7 @@ services:
       - "3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
-      - ./deploy/mysql/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+      - ./deploy/mysql:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot_secret"]
       interval: 5s
@@ -25,11 +25,16 @@ services:
       APP_ENV: development
       PORT: "8080"
       DATABASE_URL: line:line_secret@tcp(mysql:3306)/line?parseTime=true
+      BOOTSTRAP_ADMIN_PASSWORD: line_admin_2026
+      MEDIA_ROOT: /data/media
     ports:
       - "8080:8080"
+    volumes:
+      - media-data:/data/media
     depends_on:
       mysql:
         condition: service_healthy
 
 volumes:
   mysql-data:
+  media-data:

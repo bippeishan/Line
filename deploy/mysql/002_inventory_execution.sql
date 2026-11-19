@@ -1,0 +1,82 @@
+-- Run once for an existing database after 001-init.sql.
+ALTER TABLE yarns
+  ADD COLUMN batch_code VARCHAR(80) NOT NULL DEFAULT '' AFTER brand,
+  ADD COLUMN remaining_grams DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER plies,
+  ADD COLUMN unit_price DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER remaining_grams,
+  ADD COLUMN color_hex CHAR(7) NOT NULL DEFAULT '' AFTER color;
+
+CREATE TABLE project_yarn_usages (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
+  yarn_id BIGINT UNSIGNED NOT NULL,
+  grams_used DECIMAL(10,2) NOT NULL,
+  unit_cost DECIMAL(10,2) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  INDEX idx_project_yarn_usages_project (project_id),
+  CONSTRAINT fk_usage_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT fk_usage_yarn FOREIGN KEY (yarn_id) REFERENCES yarns(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE project_steps (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(160) NOT NULL,
+  is_done BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order INT UNSIGNED NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_project_steps_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE project_notes (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
+  body TEXT NOT NULL,
+  photo_data MEDIUMTEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_project_notes_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE project_reminders (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
+  target_row INT UNSIGNED NOT NULL,
+  message VARCHAR(255) NOT NULL,
+  is_done BOOLEAN NOT NULL DEFAULT FALSE,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_project_reminders_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE project_timers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  project_id BIGINT UNSIGNED NOT NULL,
+  started_at TIMESTAMP NOT NULL,
+  stopped_at TIMESTAMP NULL,
+  seconds_elapsed INT UNSIGNED NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_project_timers_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE pattern_files (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  title VARCHAR(160) NOT NULL,
+  file_data MEDIUMTEXT NOT NULL,
+  file_type ENUM('pdf','image') NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_pattern_files_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE pattern_annotations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  pattern_file_id BIGINT UNSIGNED NOT NULL,
+  page_number INT UNSIGNED NOT NULL DEFAULT 1,
+  x DECIMAL(7,4) NOT NULL,
+  y DECIMAL(7,4) NOT NULL,
+  note VARCHAR(500) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  CONSTRAINT fk_pattern_annotations_file FOREIGN KEY (pattern_file_id) REFERENCES pattern_files(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
