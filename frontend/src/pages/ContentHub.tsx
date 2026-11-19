@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { DeleteOutlined, UploadOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Input, Popconfirm, Select, Upload, message } from 'antd'
 
-type PatternFile = { id: number; title: string; fileData: string; fileType: 'pdf' | 'image'; createdAt: string }
+type PatternFile = { id: number; title: string; url: string; mimeType: string; sizeBytes: number; fileType: 'pdf' | 'image'; createdAt: string }
 
 export default function ContentHub({ onBack }: { onBack: () => void }) {
   const [source, setSource] = useState('')
@@ -21,6 +21,10 @@ export default function ContentHub({ onBack }: { onBack: () => void }) {
   useEffect(() => { loadFiles() }, [])
 
   const loadFile = (file: File) => {
+    if (file.size > 12 * 1024 * 1024) {
+      messageApi.error('图解文件不能超过 12 MB')
+      return false
+    }
     const reader = new FileReader()
     reader.onload = async () => {
       const fileData = String(reader.result)
@@ -28,9 +32,11 @@ export default function ContentHub({ onBack }: { onBack: () => void }) {
       setUploading(true)
       try {
         const response = await fetch('/api/pattern-files', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: file.name, fileData, fileType }) })
-        if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || '上传失败')
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(payload.error || '上传失败')
         await loadFiles()
-        setSource(fileData)
+        setSelectedFileId(payload.data?.id)
+        setSource(payload.data?.url ?? '')
         setSourceType(fileType)
         messageApi.success('图解已保存到文件库')
       } catch (error) {
@@ -43,7 +49,7 @@ export default function ContentHub({ onBack }: { onBack: () => void }) {
     return false
   }
 
-  const selectFile = (id: number) => { const file = files.find((item) => item.id === id); if (!file) return; setSelectedFileId(id); setSource(file.fileData); setSourceType(file.fileType) }
+  const selectFile = (id: number) => { const file = files.find((item) => item.id === id); if (!file) return; setSelectedFileId(id); setSource(file.url); setSourceType(file.fileType) }
   const removeFile = async (id: number) => { const response = await fetch('/api/pattern-files/' + id, { method: 'DELETE' }); if (!response.ok) return messageApi.error('删除失败'); if (selectedFileId === id) { setSelectedFileId(undefined); setSource(''); setSourceType(null) }; await loadFiles() }
   const ask = async () => { if (!question.trim()) return; setAsking(true); try { const response = await fetch('/api/content/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, patternFileId: selectedFileId }) }); const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.error || '问答服务暂不可用'); setAnswer(payload.data.answer) } catch (error) { messageApi.error(error instanceof Error ? error.message : '问答失败') } finally { setAsking(false) } }
 

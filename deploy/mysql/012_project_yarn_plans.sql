@@ -1,4 +1,4 @@
-CREATE TABLE project_yarn_plans (
+CREATE TABLE IF NOT EXISTS project_yarn_plans (
   project_id BIGINT UNSIGNED NOT NULL,
   yarn_id BIGINT UNSIGNED NOT NULL,
   planned_grams DECIMAL(10,2) NOT NULL,

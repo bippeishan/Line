@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { InboxOutlined, DeleteOutlined, EditOutlined, ExpandOutlined, FileAddOutlined, FilePdfOutlined, FullscreenOutlined, PlusOutlined, RotateRightOutlined, UploadOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons'
-import { Alert, Button, Card, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Switch, Tabs, Tag, Upload, message } from 'antd'
+import type { Dayjs } from 'dayjs'
+import { Alert, Button, Card, DatePicker, Empty, Form, Input, InputNumber, Modal, Popconfirm, Radio, Select, Switch, Tabs, Tag, Upload, message } from 'antd'
 import { pendingMutationCount, syncEvent, syncOfflineMutations } from '../offline'
 import { pushUndo } from '../undo'
 
@@ -12,14 +13,15 @@ type Tool = { id: number; photoData: string; name: string; type: string; thickne
 type Yarn = { id:number; name:string; remainingGrams:number; unitPrice:number }
 type Project = { id:number; version:number; coverData:string; completionPhotoData:string; name:string; patternName:string; patternFileId?:number; targetSize:string; hookSize:string; yarnNames:string[]; toolNames:string[]; palette:string[]; workTags:string[]; shareToken:string; shareShowMaterials:boolean; shareShowNote:boolean; status:'planning'|'in_progress'|'completed'|'archived'; currentRow:number; totalRows:number; breakpointNote:string; completedAt?:string; completionNote:string; actualMinutes:number; targetDate?:string; weeklyFocusMinutes:number; createdAt:string; materialCost:number }
 type ProjectForm = { coverData:string; completionPhotoData:string; name:string; patternName:string; patternFileId?:number; targetSize:string; hookSize:string; yarnNames:string[]; toolNames:string[]; palette:string[]; workTags:string[]; status:'planning'|'in_progress'|'completed'|'archived'; currentRow:number; totalRows:number; breakpointNote:string; completionNote:string; actualMinutes:number; targetDate?:string; weeklyFocusMinutes:number }
-type PatternFile = { id:number; title:string; fileData:string; fileType:'pdf'|'image'; createdAt:string }
+type PatternFile = { id:number; title:string; url:string; mimeType:string; sizeBytes:number; fileType:'pdf'|'image'; createdAt:string }
 type PatternAnnotation = { id:number; pageNumber:number; rowNumber:number; x:number; y:number; note:string; createdAt:string }
 type StitchTerm = { id:number; code:string; nameZh:string; nameEn:string; category:string; description:string; instruction:string; caution:string; isFavorite:boolean }
 type ProjectStep = { id:number; title:string; isDone:boolean; sortOrder:number }
 type ProjectNote = { id:number; body:string; photoData:string; createdAt:string }
 type ProjectActivity = { id:number; kind:string; detail:string; createdAt:string }
 type AuditEvent = { id:number; action:string; resourceType:string; resourceId:number; details:Record<string,unknown>; createdAt:string }
-type ProjectReminder = { id:number; targetRow:number; message:string; isDone:boolean }
+type ProjectReminder = { id:number; targetRow:number; message:string; isDone:boolean; remindAt?:string|null; channel:'in_app'|'email'; emailSentAt?:string|null; attempts:number; lastError:string }
+type ReminderForm = { targetRow:number; message:string; remindAt?:Dayjs|null; channel:'in_app'|'email' }
 type CalculationRecord = { id:number; projectId?:number; mode:'circle'|'size'|'yarn'; input:Record<string,number>; result:Record<string,unknown>; formula:string; createdAt:string }
 type ProjectYarnUsage = { id:number; yarnId:number; yarnName:string; grams:number; cost:number; createdAt:string }
 type ProjectAccessory = { id:number; name:string; quantity:number; unit:string; unitPrice:number; cost:number; createdAt:string }
@@ -35,7 +37,6 @@ const conflictFields = [
   { key:'weeklyFocusMinutes', label:'每周专注目标' }, { key:'yarnNames', label:'关联线材' }, { key:'toolNames', label:'关联工具' }, { key:'workTags', label:'作品标签' },
   { key:'breakpointNote', label:'断点备注' }, { key:'completionNote', label:'完成感想' }, { key:'actualMinutes', label:'实际用时' }, { key:'palette', label:'配色' },
 ] as const
-function readData(file: File, done: (data: string) => void) { if (file.size > 8 * 1024 * 1024) return false; const reader = new FileReader(); reader.onload = () => done(String(reader.result)); reader.readAsDataURL(file); return false }
 function formatFocusTime(seconds: number) { const hours=Math.floor(seconds/3600); const minutes=Math.floor(seconds%3600/60); const rest=seconds%60; return `${hours?`${String(hours).padStart(2,'0')}:`:''}${String(minutes).padStart(2,'0')}:${String(rest).padStart(2,'0')}` }
 
 export default function ProjectWorkspace({ onBack, initialProjectId, onInitialProjectOpened }: { onBack: () => void; initialProjectId: number | null; onInitialProjectOpened: () => void }) {
@@ -67,7 +68,7 @@ export default function ProjectWorkspace({ onBack, initialProjectId, onInitialPr
   const uploadMedia=async(file:File)=>{if(!file.type.startsWith('image/'))throw new Error('请上传图片文件');if(file.size>8*1024*1024)throw new Error('图片不能超过 8 MB');const body=new FormData();body.append('file',file);const response=await fetch('/api/media/images',{method:'POST',body});const payload=await response.json().catch(()=>({})) as {data?:{url:string};error?:string};if(!response.ok||!payload.data?.url)throw new Error(payload.error??'图片上传失败');return payload.data.url}
   const uploadCover=(file:File)=>{void uploadMedia(file).then((url)=>form.setFieldValue('coverData',url)).catch((e)=>messageApi.error(e instanceof Error?e.message:'图片上传失败'));return false}
   const uploadCompletionPhoto=(file:File)=>{void uploadMedia(file).then((url)=>form.setFieldValue('completionPhotoData',url)).catch((e)=>messageApi.error(e instanceof Error?e.message:'图片上传失败'));return false}
-  const uploadPattern=(file:File)=>readData(file,async(data)=>{try{await request('/api/pattern-files',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:file.name,fileData:data,fileType:file.type==='application/pdf'?'pdf':'image'})});messageApi.success('图解已加入文件库');load()}catch(e){messageApi.error(e instanceof Error?e.message:'图解上传失败')}})
+  const uploadPattern=(file:File)=>{if(file.size>12*1024*1024){messageApi.error('图解文件不能超过 12 MB');return false}const reader=new FileReader();reader.onload=async()=>{try{await request('/api/pattern-files',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:file.name,fileData:String(reader.result),fileType:file.type==='application/pdf'?'pdf':'image'})});messageApi.success('图解已加入文件库');load()}catch(e){messageApi.error(e instanceof Error?e.message:'图解上传失败')}};reader.readAsDataURL(file);return false}
   const openPatternReader=async(file:PatternFile)=>{try{const response=await request(`/api/pattern-files/${file.id}/annotations`);setAnnotations(response.data);setReader(file)}catch(e){messageApi.error(e instanceof Error?e.message:'无法读取图解标注')}}
   const addAnnotation=async(values:Omit<PatternAnnotation,'id'|'createdAt'>)=>{if(!reader)return;try{await request(`/api/pattern-files/${reader.id}/annotations`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});const response=await request(`/api/pattern-files/${reader.id}/annotations`);setAnnotations(response.data);messageApi.success('图解标记已保存')}catch(e){messageApi.error(e instanceof Error?e.message:'保存标记失败')}}
   const deleteAnnotation=async(item:PatternAnnotation)=>{if(!reader)return;try{await request(`/api/pattern-files/${reader.id}/annotations/${item.id}`,{method:'DELETE'});setAnnotations((items)=>items.filter((value)=>value.id!==item.id))}catch(e){messageApi.error(e instanceof Error?e.message:'删除标记失败')}}
@@ -77,7 +78,8 @@ export default function ProjectWorkspace({ onBack, initialProjectId, onInitialPr
   const useYarn=async(values:{yarnId:number;grams:number})=>{if(!selected)return;await request(`/api/projects/${selected.id}/usages`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});messageApi.success('材料用量已记录，并更新线材余量');load();loadDetail(selected)}
   const saveYarnPlan=async(values:{yarnId:number;plannedGrams:number})=>{if(!selected)return;try{const existing=yarnPlans.filter((item)=>item.yarnId!==values.yarnId).map((item)=>({yarnId:item.yarnId,plannedGrams:item.plannedGrams}));await request(`/api/projects/${selected.id}/yarn-plans`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({plans:[...existing,values]})});messageApi.success('预计用量已保存');loadDetail(selected)}catch(e){messageApi.error(e instanceof Error?e.message:'保存预计用量失败')}}
   const removeYarnPlan=async(plan:ProjectYarnPlan)=>{if(!selected)return;try{await request(`/api/projects/${selected.id}/yarn-plans`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({plans:yarnPlans.filter((item)=>item.yarnId!==plan.yarnId).map((item)=>({yarnId:item.yarnId,plannedGrams:item.plannedGrams}))})});loadDetail(selected)}catch(e){messageApi.error(e instanceof Error?e.message:'移除预计用量失败')}}
-  const addReminder=async(values:{targetRow:number;message:string})=>{if(!selected)return;try{await request(`/api/projects/${selected.id}/reminders`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});messageApi.success('关键行提醒已保存');loadDetail(selected)}catch(e){messageApi.error(e instanceof Error?e.message:'保存提醒失败')}}
+  const addReminder=async(values:ReminderForm)=>{if(!selected)return;try{await request(`/api/projects/${selected.id}/reminders`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...values,remindAt:values.remindAt?values.remindAt.toISOString():null})});messageApi.success(values.channel==='email'?'提醒已保存，到点会发邮件':'关键行提醒已保存');loadDetail(selected)}catch(e){messageApi.error(e instanceof Error?e.message:'保存提醒失败')}}
+  const sendReminderEmail=async(item:ProjectReminder)=>{if(!selected)return;try{const response=await request(`/api/projects/${selected.id}/reminders/${item.id}/send`,{method:'POST'});messageApi.success(`提醒邮件已发送至 ${response.data.email}`);loadDetail(selected)}catch(e){messageApi.error(e instanceof Error?e.message:'发送提醒邮件失败')}}
   const toggleReminder=async(item:ProjectReminder)=>{if(!selected)return;try{await request(`/api/projects/${selected.id}/reminders/${item.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({...item,isDone:!item.isDone})});loadDetail(selected)}catch(e){messageApi.error(e instanceof Error?e.message:'更新提醒失败')}}
   const deleteReminder=async(item:ProjectReminder)=>{if(!selected)return;try{await request(`/api/projects/${selected.id}/reminders/${item.id}`,{method:'DELETE'});loadDetail(selected)}catch(e){messageApi.error(e instanceof Error?e.message:'删除提醒失败')}}
   const deleteCalculation=async(item:CalculationRecord)=>{if(!selected)return;try{await request(`/api/calculations/${item.id}`,{method:'DELETE'});messageApi.success('计算记录已删除');loadDetail(selected)}catch(e){messageApi.error(e instanceof Error?e.message:'删除失败')}}
@@ -254,12 +256,18 @@ export default function ProjectWorkspace({ onBack, initialProjectId, onInitialPr
 <span>{s.title}</span>
 </div>)}</div>
 </section>},{key:'reminders',label:'提醒',children:<section className="workspace-tab">
-<Form layout="inline" onFinish={addReminder}>
+<Form layout="inline" onFinish={addReminder} initialValues={{channel:'in_app'}}>
 <Form.Item name="targetRow" rules={[{required:true,message:'请输入行数'}]}>
 <InputNumber min={1} addonBefore="第" addonAfter="行" placeholder="关键行"/>
 </Form.Item>
 <Form.Item name="message" rules={[{required:true,message:'请输入提醒内容'}]}>
 <Input placeholder="例如：换色并填充头部"/>
+</Form.Item>
+<Form.Item name="remindAt" label="发送时间">
+<DatePicker showTime format="MM-DD HH:mm" placeholder="选填，留空则只做站内提醒"/>
+</Form.Item>
+<Form.Item name="channel" label="渠道">
+<Radio.Group optionType="button" buttonStyle="solid" options={[{value:'in_app',label:'站内'},{value:'email',label:'邮件'}]}/>
 </Form.Item>
 <Button type="primary" htmlType="submit">添加提醒</Button>
 </Form>
@@ -267,6 +275,7 @@ export default function ProjectWorkspace({ onBack, initialProjectId, onInitialPr
 <div key={item.id} className={item.isDone?'done':''}>
 <span>第 {item.targetRow} 行</span>
 <p>{item.message}</p>
+<span className="reminder-delivery">{item.channel==='email'?<>{item.emailSentAt?<Tag color="green">已发送 {new Date(item.emailSentAt).toLocaleString('zh-CN')}</Tag>:item.lastError?<Tag color="red">发送失败 · 重试 {item.attempts} 次</Tag>:<Tag color="gold">待发送 {item.remindAt?new Date(item.remindAt).toLocaleString('zh-CN'):'未设时间'}</Tag>}<Button type="link" size="small" onClick={()=>sendReminderEmail(item)}>立即发送</Button></>:<Tag>仅站内</Tag>}</span>
 <Button type={item.isDone?'default':'primary'} onClick={()=>toggleReminder(item)}>{item.isDone?'恢复':'完成'}</Button>
 <Popconfirm title="删除这条提醒？" onConfirm={()=>deleteReminder(item)}>
 <Button type="text" danger icon={<DeleteOutlined/>} aria-label="删除提醒"/>
@@ -419,7 +428,7 @@ function PatternReader({ file, annotations, currentRow, onCreateAnnotation, onDe
 </div>
 <div className="pattern-reader-layout">
 <div className="pattern-reader-canvas">{file?.fileType === 'pdf' ? <PDFPageCanvas file={file} pageNumber={pageNumber} onPageChange={setPageNumber} onSelectPoint={(point)=>{setPending(point);annotationForm.setFieldsValue({rowNumber:currentRow||1,note:''})}}/> : file && <div className="pattern-image-stage" onClick={selectPoint} style={{transform:`scale(${zoom}) rotate(${rotation}deg)`}}>
-<img src={file.fileData} alt={file.title}/>{annotations.map((item)=>
+<img src={file.url} alt={file.title}/>{annotations.map((item)=>
 <button key={item.id} className={`pattern-marker ${item.rowNumber===currentRow?'current':''}`} style={{left:`${item.x*100}%`,top:`${item.y*100}%`}} onClick={(event)=>event.stopPropagation()} title={`第 ${item.rowNumber||'—'} 行：${item.note}`}>{item.rowNumber||'•'}</button>)}</div>}</div>
 <aside className="annotation-panel">{pending ? <Form form={annotationForm} layout="vertical" onFinish={saveAnnotation}>
 <p className="eyebrow">NEW MARKER</p>
@@ -457,7 +466,7 @@ function PDFPageCanvas({ file, pageNumber, onPageChange, onSelectPoint }: { file
     const render = async () => {
       try {
         setError('')
-        const bytes = new Uint8Array(await (await fetch(file.fileData)).arrayBuffer())
+        const bytes = new Uint8Array(await (await fetch(file.url)).arrayBuffer())
         const document = await getDocument({ data: bytes }).promise
         if (cancelled) return
         setPageCount(document.numPages)
@@ -478,7 +487,7 @@ function PDFPageCanvas({ file, pageNumber, onPageChange, onSelectPoint }: { file
     }
     render()
     return () => { cancelled = true }
-  }, [file.id, file.fileData, pageNumber, onPageChange])
+  }, [file.id, file.url, pageNumber, onPageChange])
   if (error) return <Empty description={error} />
   return <div className="pdf-page-canvas"><div className="pdf-page-controls"><Button onClick={() => onPageChange(Math.max(1, pageNumber - 1))} disabled={pageNumber <= 1}>上一页</Button><span>第 {pageNumber} / {pageCount} 页</span><Button onClick={() => onPageChange(Math.min(pageCount, pageNumber + 1))} disabled={pageNumber >= pageCount}>下一页</Button></div><canvas ref={canvasRef} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); onSelectPoint({ x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }) }} /></div>
 }

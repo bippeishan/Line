@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -303,8 +305,10 @@ type shareProjectRequest struct {
 type patternFile struct {
 	ID        int64     `json:"id"`
 	Title     string    `json:"title"`
-	FileData  string    `json:"fileData"`
 	FileType  string    `json:"fileType"`
+	MimeType  string    `json:"mimeType"`
+	SizeBytes int64     `json:"sizeBytes"`
+	URL       string    `json:"url"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 type createPatternFileRequest struct {
@@ -370,25 +374,36 @@ type projectActivity struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 type projectReminder struct {
-	ID        int64  `json:"id"`
-	TargetRow int    `json:"targetRow"`
-	Message   string `json:"message"`
-	IsDone    bool   `json:"isDone"`
+	ID          int64      `json:"id"`
+	TargetRow   int        `json:"targetRow"`
+	Message     string     `json:"message"`
+	IsDone      bool       `json:"isDone"`
+	RemindAt    *time.Time `json:"remindAt"`
+	Channel     string     `json:"channel"`
+	EmailSentAt *time.Time `json:"emailSentAt"`
+	Attempts    int        `json:"attempts"`
+	LastError   string     `json:"lastError"`
 }
 type createProjectReminderRequest struct {
-	TargetRow int    `json:"targetRow"`
-	Message   string `json:"message"`
+	TargetRow int        `json:"targetRow"`
+	Message   string     `json:"message"`
+	RemindAt  *time.Time `json:"remindAt"`
+	Channel   string     `json:"channel"`
 }
 type updateProjectReminderRequest struct {
-	TargetRow int    `json:"targetRow"`
-	Message   string `json:"message"`
-	IsDone    bool   `json:"isDone"`
+	TargetRow int        `json:"targetRow"`
+	Message   string     `json:"message"`
+	IsDone    bool       `json:"isDone"`
+	RemindAt  *time.Time `json:"remindAt"`
+	Channel   string     `json:"channel"`
 }
 type upcomingReminder struct {
-	ProjectID   int64  `json:"projectId"`
-	ProjectName string `json:"projectName"`
-	TargetRow   int    `json:"targetRow"`
-	Message     string `json:"message"`
+	ProjectID   int64      `json:"projectId"`
+	ProjectName string     `json:"projectName"`
+	TargetRow   int        `json:"targetRow"`
+	Message     string     `json:"message"`
+	RemindAt    *time.Time `json:"remindAt"`
+	Channel     string     `json:"channel"`
 }
 type addUsageRequest struct {
 	YarnID int64   `json:"yarnId"`
@@ -466,6 +481,8 @@ func main() {
 		if err := ensureBootstrapAdmin(db, cfg.bootstrapAdminPassword); err != nil {
 			log.Printf("bootstrap administrator: %v", err)
 		}
+		backfillPatternFiles(context.Background(), db, store)
+		startReminderDispatcher(context.Background(), db, cfg)
 	}
 
 	mux := http.NewServeMux()
@@ -492,7 +509,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/media/{id}", mediaDeleteHandler(db, cfg, store))
 	mux.HandleFunc("POST /api/calculator/{mode}", calculatorHandler(db))
 	mux.HandleFunc("POST /api/calculations", saveCalculationHandler(db))
-	mux.HandleFunc("POST /api/content/ask", contentAskHandler(db, cfg))
+	mux.HandleFunc("POST /api/content/ask", contentAskHandler(db, cfg, store))
 	mux.HandleFunc("DELETE /api/calculations/{id}", deleteCalculationHandler(db))
 	mux.HandleFunc("GET /api/yarns", permissionHandler(db, "inventory.read", yarnsHandler(db)))
 	mux.HandleFunc("POST /api/yarns", permissionHandler(db, "inventory.write", createYarnHandler(db)))
@@ -526,8 +543,9 @@ func main() {
 	mux.HandleFunc("POST /api/projects/{id}/accessories", createProjectAccessoryHandler(db))
 	mux.HandleFunc("DELETE /api/projects/{id}/accessories/{accessoryID}", deleteProjectAccessoryHandler(db))
 	mux.HandleFunc("GET /api/pattern-files", patternFilesHandler(db))
-	mux.HandleFunc("POST /api/pattern-files", createPatternFileHandler(db))
-	mux.HandleFunc("DELETE /api/pattern-files/{id}", deletePatternFileHandler(db))
+	mux.HandleFunc("POST /api/pattern-files", createPatternFileHandler(db, store))
+	mux.HandleFunc("GET /api/pattern-files/{id}/file", patternFileContentHandler(db, store))
+	mux.HandleFunc("DELETE /api/pattern-files/{id}", deletePatternFileHandler(db, store))
 	mux.HandleFunc("GET /api/pattern-files/{id}/annotations", patternAnnotationsHandler(db))
 	mux.HandleFunc("POST /api/pattern-files/{id}/annotations", createPatternAnnotationHandler(db))
 	mux.HandleFunc("DELETE /api/pattern-files/{id}/annotations/{annotationID}", deletePatternAnnotationHandler(db))
@@ -544,6 +562,7 @@ func main() {
 	mux.HandleFunc("PATCH /api/projects/{id}/reminders/{reminderID}", updateProjectReminderHandler(db))
 	mux.HandleFunc("DELETE /api/projects/{id}/reminders/{reminderID}", deleteProjectReminderHandler(db))
 	mux.HandleFunc("GET /api/reminders/upcoming", upcomingReminderHandler(db))
+	mux.HandleFunc("POST /api/projects/{id}/reminders/{reminderID}/send", permissionHandler(db, "project.write", sendReminderEmailHandler(db, cfg)))
 	mux.HandleFunc("GET /api/users", usersHandler(db))
 	mux.HandleFunc("POST /api/users", createUserHandler(db))
 	mux.HandleFunc("DELETE /api/users/{id}", deleteUserHandler(db))
@@ -1360,7 +1379,7 @@ func patternFilesHandler(db *sql.DB) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		rows, err := db.QueryContext(r.Context(), `SELECT id,title,file_data,file_type,created_at FROM pattern_files WHERE user_id=? ORDER BY created_at DESC,id DESC`, account.ID)
+		rows, err := db.QueryContext(r.Context(), `SELECT id,title,file_type,mime_type,size_bytes,created_at FROM pattern_files WHERE user_id=? ORDER BY created_at DESC,id DESC`, account.ID)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "could not load pattern files"})
 			return
@@ -1369,42 +1388,126 @@ func patternFilesHandler(db *sql.DB) http.HandlerFunc {
 		items := make([]patternFile, 0)
 		for rows.Next() {
 			var item patternFile
-			if err := rows.Scan(&item.ID, &item.Title, &item.FileData, &item.FileType, &item.CreatedAt); err != nil {
+			if err := rows.Scan(&item.ID, &item.Title, &item.FileType, &item.MimeType, &item.SizeBytes, &item.CreatedAt); err != nil {
 				writeJSON(w, 500, map[string]string{"error": "could not read pattern file"})
 				return
 			}
+			item.URL = patternFileURL(item.ID)
 			items = append(items, item)
 		}
 		writeJSON(w, 200, map[string]any{"data": items})
 	}
 }
 
-func createPatternFileHandler(db *sql.DB) http.HandlerFunc {
+func createPatternFileHandler(db *sql.DB, store objectStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		account, ok := requireSignedIn(db, w, r)
 		if !ok {
 			return
 		}
 		var in createPatternFileRequest
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPatternBytes*4/3+(1<<20))).Decode(&in); err != nil {
 			writeJSON(w, 400, map[string]string{"error": "invalid request body"})
 			return
 		}
-		if len(strings.TrimSpace(in.Title)) < 1 || len(strings.TrimSpace(in.Title)) > 160 || (in.FileType != "pdf" && in.FileType != "image") || len(in.FileData) > 2_800_000 || (in.FileType == "pdf" && !strings.HasPrefix(in.FileData, "data:application/pdf")) || (in.FileType == "image" && !strings.HasPrefix(in.FileData, "data:image/")) {
+		if len(strings.TrimSpace(in.Title)) < 1 || len(strings.TrimSpace(in.Title)) > 160 || (in.FileType != "pdf" && in.FileType != "image") {
 			writeJSON(w, 400, map[string]string{"error": "invalid pattern file"})
 			return
 		}
-		result, err := db.ExecContext(r.Context(), `INSERT INTO pattern_files (user_id,title,file_data,file_type) VALUES (?,?,?,?)`, account.ID, strings.TrimSpace(in.Title), in.FileData, in.FileType)
+		mimeType, body, err := decodeDataURL(in.FileData)
+		if err != nil || !patternMimeAllowed(in.FileType, mimeType) {
+			writeJSON(w, 400, map[string]string{"error": "only PDF, JPEG, PNG, GIF, or WebP pattern files are supported"})
+			return
+		}
+		if int64(len(body)) > maxPatternBytes {
+			writeJSON(w, 413, map[string]string{"error": "pattern file must be smaller than 20 MB"})
+			return
+		}
+		var used int64
+		if err := db.QueryRowContext(r.Context(), `SELECT COALESCE(SUM(size_bytes),0) FROM pattern_files WHERE user_id=?`, account.ID).Scan(&used); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not check pattern storage quota"})
+			return
+		}
+		if used+int64(len(body)) > patternQuotaBytes {
+			writeJSON(w, 413, map[string]string{"error": "pattern storage quota exceeded (200 MB per account)"})
+			return
+		}
+		result, err := db.ExecContext(r.Context(), `INSERT INTO pattern_files (user_id,title,file_type,mime_type,size_bytes) VALUES (?,?,?,?,?)`, account.ID, strings.TrimSpace(in.Title), in.FileType, mimeType, len(body))
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "could not save pattern file"})
 			return
 		}
 		id, _ := result.LastInsertId()
-		writeJSON(w, 201, map[string]any{"data": map[string]int64{"id": id}})
+		objectKey := patternObjectKey(id, mimeType)
+		if err = store.Put(r.Context(), objectKey, body, mimeType); err != nil {
+			_, _ = db.ExecContext(r.Context(), `DELETE FROM pattern_files WHERE id=?`, id)
+			writeJSON(w, 500, map[string]string{"error": "could not store pattern file"})
+			return
+		}
+		if _, err = db.ExecContext(r.Context(), `UPDATE pattern_files SET object_key=? WHERE id=? AND user_id=?`, objectKey, id, account.ID); err != nil {
+			_ = store.Delete(r.Context(), objectKey)
+			_, _ = db.ExecContext(r.Context(), `DELETE FROM pattern_files WHERE id=?`, id)
+			writeJSON(w, 500, map[string]string{"error": "could not finalize pattern file"})
+			return
+		}
+		recordAudit(r.Context(), db, account.ID, "pattern.create", "pattern_file", id, map[string]any{"mimeType": mimeType, "sizeBytes": len(body)})
+		writeJSON(w, 201, map[string]any{"data": map[string]any{"id": id, "url": patternFileURL(id), "mimeType": mimeType, "sizeBytes": len(body)}})
 	}
 }
 
-func contentAskHandler(db *sql.DB, cfg config) http.HandlerFunc {
+// patternFileContentHandler streams the stored object. Legacy rows that still keep the
+// bytes in pattern_files.file_data are migrated to object storage on first read.
+func patternFileContentHandler(db *sql.DB, store objectStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		account, ok := requireSignedIn(db, w, r)
+		if !ok {
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id < 1 {
+			http.NotFound(w, r)
+			return
+		}
+		body, mimeType, err := readPatternObject(r.Context(), db, store, account.ID, id)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", mimeType)
+		w.Header().Set("Cache-Control", "private, max-age=600")
+		http.ServeContent(w, r, patternObjectKey(id, mimeType), time.Now(), bytes.NewReader(body))
+	}
+}
+
+func deletePatternFileHandler(db *sql.DB, store objectStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		account, ok := requireSignedIn(db, w, r)
+		if !ok {
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id < 1 {
+			writeJSON(w, 400, map[string]string{"error": "invalid pattern file id"})
+			return
+		}
+		var objectKey string
+		if err := db.QueryRowContext(r.Context(), `SELECT COALESCE(object_key,'') FROM pattern_files WHERE id=? AND user_id=?`, id, account.ID).Scan(&objectKey); err != nil {
+			writeJSON(w, 404, map[string]string{"error": "pattern file not found"})
+			return
+		}
+		if _, err = db.ExecContext(r.Context(), `DELETE FROM pattern_files WHERE id=? AND user_id=?`, id, account.ID); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not delete pattern file"})
+			return
+		}
+		if objectKey != "" {
+			_ = store.Delete(r.Context(), objectKey)
+		}
+		recordAudit(r.Context(), db, account.ID, "pattern.delete", "pattern_file", id, map[string]any{})
+		w.WriteHeader(204)
+	}
+}
+
+func contentAskHandler(db *sql.DB, cfg config, store objectStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		account, ok := requireSignedIn(db, w, r)
 		if !ok {
@@ -1425,13 +1528,18 @@ func contentAskHandler(db *sql.DB, cfg config) http.HandlerFunc {
 				writeJSON(w, 404, map[string]string{"error": "pattern file not found"})
 				return
 			}
-			var fileType, fileData string
-			if err := db.QueryRowContext(r.Context(), `SELECT file_type,file_data FROM pattern_files WHERE id=? AND user_id=?`, *input.PatternFileID, account.ID).Scan(&fileType, &fileData); err != nil {
+			var fileType string
+			if err := db.QueryRowContext(r.Context(), `SELECT file_type FROM pattern_files WHERE id=? AND user_id=?`, *input.PatternFileID, account.ID).Scan(&fileType); err != nil {
+				writeJSON(w, 500, map[string]string{"error": "could not load pattern file"})
+				return
+			}
+			body, mimeType, err := readPatternObject(r.Context(), db, store, account.ID, *input.PatternFileID)
+			if err != nil {
 				writeJSON(w, 500, map[string]string{"error": "could not load pattern file"})
 				return
 			}
 			if fileType == "image" {
-				content = append(content, map[string]string{"type": "input_image", "image_url": fileData})
+				content = append(content, map[string]string{"type": "input_image", "image_url": "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(body)})
 			} else {
 				content = append(content, map[string]string{"type": "input_text", "text": "用户已关联一份 PDF 图解。当前版本不能直接提取 PDF 页面；请基于问题说明需要用户提供的页码、行号或截图。"})
 			}
@@ -1478,31 +1586,6 @@ func contentAskHandler(db *sql.DB, cfg config) http.HandlerFunc {
 	}
 }
 
-func deletePatternFileHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		account, ok := requireSignedIn(db, w, r)
-		if !ok {
-			return
-		}
-		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || id < 1 {
-			writeJSON(w, 400, map[string]string{"error": "invalid pattern file id"})
-			return
-		}
-		res, err := db.ExecContext(r.Context(), `DELETE FROM pattern_files WHERE id=? AND user_id=?`, id, account.ID)
-		if err != nil {
-			writeJSON(w, 500, map[string]string{"error": "could not delete pattern file"})
-			return
-		}
-		n, _ := res.RowsAffected()
-		if n == 0 {
-			writeJSON(w, 404, map[string]string{"error": "pattern file not found"})
-			return
-		}
-		w.WriteHeader(204)
-	}
-}
-
 func patternFileOwned(ctx context.Context, db *sql.DB, userID, fileID int64) bool {
 	var count int
 	return db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pattern_files WHERE id=? AND user_id=?`, fileID, userID).Scan(&count) == nil && count == 1
@@ -1519,7 +1602,7 @@ func patternAnnotationsHandler(db *sql.DB) http.HandlerFunc {
 			writeJSON(w, 404, map[string]string{"error": "pattern file not found"})
 			return
 		}
-		rows, err := db.QueryContext(r.Context(), `SELECT id,page_number,row_number,x,y,note,created_at FROM pattern_annotations WHERE pattern_file_id=? ORDER BY page_number,row_number,id`, fileID)
+		rows, err := db.QueryContext(r.Context(), "SELECT id,page_number,`row_number`,x,y,note,created_at FROM pattern_annotations WHERE pattern_file_id=? ORDER BY page_number,`row_number`,id", fileID)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "could not load annotations"})
 			return
@@ -1554,7 +1637,7 @@ func createPatternAnnotationHandler(db *sql.DB) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "invalid annotation"})
 			return
 		}
-		result, err := db.ExecContext(r.Context(), `INSERT INTO pattern_annotations (pattern_file_id,page_number,row_number,x,y,note) VALUES (?,?,?,?,?,?)`, fileID, input.PageNumber, input.RowNumber, input.X, input.Y, strings.TrimSpace(input.Note))
+		result, err := db.ExecContext(r.Context(), "INSERT INTO pattern_annotations (pattern_file_id,page_number,`row_number`,x,y,note) VALUES (?,?,?,?,?,?)", fileID, input.PageNumber, input.RowNumber, input.X, input.Y, strings.TrimSpace(input.Note))
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "could not save annotation"})
 			return
@@ -1787,7 +1870,7 @@ func projectRemindersHandler(db *sql.DB) http.HandlerFunc {
 			writeJSON(w, 404, map[string]string{"error": "project not found"})
 			return
 		}
-		rows, err := db.QueryContext(r.Context(), `SELECT id,target_row,message,is_done FROM project_reminders WHERE project_id=? ORDER BY is_done,target_row,id`, projectID)
+		rows, err := db.QueryContext(r.Context(), `SELECT id,target_row,message,is_done,remind_at,channel,email_sent_at,attempts,COALESCE(last_error,'') FROM project_reminders WHERE project_id=? ORDER BY is_done,target_row,id`, projectID)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "could not load reminders"})
 			return
@@ -1796,7 +1879,7 @@ func projectRemindersHandler(db *sql.DB) http.HandlerFunc {
 		items := make([]projectReminder, 0)
 		for rows.Next() {
 			var item projectReminder
-			if err := rows.Scan(&item.ID, &item.TargetRow, &item.Message, &item.IsDone); err != nil {
+			if err := rows.Scan(&item.ID, &item.TargetRow, &item.Message, &item.IsDone, &item.RemindAt, &item.Channel, &item.EmailSentAt, &item.Attempts, &item.LastError); err != nil {
 				writeJSON(w, 500, map[string]string{"error": "could not read reminder"})
 				return
 			}
@@ -1822,7 +1905,12 @@ func createProjectReminderHandler(db *sql.DB) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "a valid target row and reminder are required"})
 			return
 		}
-		result, err := db.ExecContext(r.Context(), `INSERT INTO project_reminders (project_id,target_row,message) VALUES (?,?,?)`, projectID, input.TargetRow, strings.TrimSpace(input.Message))
+		channel, remindAt, err := validateReminderDelivery(input.Channel, input.RemindAt)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		result, err := db.ExecContext(r.Context(), `INSERT INTO project_reminders (project_id,target_row,message,remind_at,channel) VALUES (?,?,?,?,?)`, projectID, input.TargetRow, strings.TrimSpace(input.Message), remindAt, channel)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "could not create reminder"})
 			return
@@ -1850,7 +1938,13 @@ func updateProjectReminderHandler(db *sql.DB) http.HandlerFunc {
 			writeJSON(w, 400, map[string]string{"error": "invalid reminder"})
 			return
 		}
-		result, err := db.ExecContext(r.Context(), `UPDATE project_reminders SET target_row=?,message=?,is_done=? WHERE id=? AND project_id=?`, input.TargetRow, strings.TrimSpace(input.Message), input.IsDone, reminderID, projectID)
+		channel, remindAt, err := validateReminderDelivery(input.Channel, input.RemindAt)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		// 修改提醒会重新武装投递状态，避免旧的发送记录掩盖新的时间。
+		result, err := db.ExecContext(r.Context(), `UPDATE project_reminders SET target_row=?,message=?,is_done=?,channel=?,remind_at=?,email_sent_at=NULL,attempts=0,last_error=NULL WHERE id=? AND project_id=?`, input.TargetRow, strings.TrimSpace(input.Message), input.IsDone, channel, remindAt, reminderID, projectID)
 		if err != nil {
 			writeJSON(w, 500, map[string]string{"error": "could not update reminder"})
 			return
@@ -1895,7 +1989,7 @@ func upcomingReminderHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		var item upcomingReminder
-		err := db.QueryRowContext(r.Context(), `SELECT p.id,p.name,r.target_row,r.message FROM project_reminders r JOIN projects p ON p.id=r.project_id WHERE p.user_id=? AND p.status IN ('planning','in_progress') AND r.is_done=FALSE ORDER BY CASE WHEN r.target_row>=p.current_row THEN 0 ELSE 1 END,r.target_row,p.updated_at DESC LIMIT 1`, account.ID).Scan(&item.ProjectID, &item.ProjectName, &item.TargetRow, &item.Message)
+		err := db.QueryRowContext(r.Context(), `SELECT p.id,p.name,r.target_row,r.message,r.remind_at,r.channel FROM project_reminders r JOIN projects p ON p.id=r.project_id WHERE p.user_id=? AND p.status IN ('planning','in_progress') AND r.is_done=FALSE ORDER BY CASE WHEN r.target_row>=p.current_row THEN 0 ELSE 1 END,r.target_row,p.updated_at DESC LIMIT 1`, account.ID).Scan(&item.ProjectID, &item.ProjectName, &item.TargetRow, &item.Message, &item.RemindAt, &item.Channel)
 		if err == sql.ErrNoRows {
 			writeJSON(w, 200, map[string]any{"data": nil})
 			return
@@ -1907,6 +2001,209 @@ func upcomingReminderHandler(db *sql.DB) http.HandlerFunc {
 		writeJSON(w, 200, map[string]any{"data": item})
 	}
 }
+
+const (
+	reminderChannelInApp       = "in_app"
+	reminderChannelEmail       = "email"
+	reminderMaxAttempts        = 5
+	reminderDispatchInterval   = time.Minute
+	reminderDispatchBatch      = 50
+	reminderMaxFutureWindow    = 2 * 365 * 24 * time.Hour
+	reminderMaxPastWindow      = 365 * 24 * time.Hour
+	reminderErrorMaxCharacters = 240
+)
+
+// validateReminderDelivery 归一化提醒渠道与发送时间：未指定时间时视为仅站内提醒。
+func validateReminderDelivery(channel string, remindAt *time.Time) (string, *time.Time, error) {
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		channel = reminderChannelInApp
+	}
+	if channel != reminderChannelInApp && channel != reminderChannelEmail {
+		return "", nil, fmt.Errorf("channel must be in_app or email")
+	}
+	if remindAt == nil {
+		if channel == reminderChannelEmail {
+			return "", nil, fmt.Errorf("email reminders need a remindAt time")
+		}
+		return channel, nil, nil
+	}
+	now := time.Now()
+	if remindAt.Before(now.Add(-reminderMaxPastWindow)) || remindAt.After(now.Add(reminderMaxFutureWindow)) {
+		return "", nil, fmt.Errorf("remindAt must be within one year ago and two years ahead")
+	}
+	utc := remindAt.UTC()
+	return channel, &utc, nil
+}
+
+// reminderEmailMessage 生成纯文本提醒邮件，便于单测固定文案与关键信息。
+func reminderEmailMessage(recipientName, projectName string, targetRow, currentRow, totalRows int, note, appBaseURL string, projectID int64) (string, string) {
+	name := strings.TrimSpace(recipientName)
+	if name == "" {
+		name = "钩织手"
+	}
+	subject := fmt.Sprintf("【线禾】%s · 第 %d 行提醒", projectName, targetRow)
+	progress := fmt.Sprintf("当前进度：第 %d 行", currentRow)
+	if totalRows > 0 {
+		progress = fmt.Sprintf("当前进度：第 %d / %d 行", currentRow, totalRows)
+	}
+	lines := []string{
+		name + "，你好：",
+		"",
+		fmt.Sprintf("《%s》在第 %d 行设了提醒：%s", projectName, targetRow, note),
+		progress,
+		"",
+		fmt.Sprintf("继续钩织：%s/?project=%d", strings.TrimRight(appBaseURL, "/"), projectID),
+		"",
+		"如果已经完成，可以在项目页把这条提醒标记为已完成，之后不会再收到邮件。",
+		"— 线禾",
+	}
+	return subject, strings.Join(lines, "\r\n")
+}
+
+type dueReminder struct {
+	ID          int64
+	ProjectID   int64
+	UserID      int64
+	ProjectName string
+	TargetRow   int
+	CurrentRow  int
+	TotalRows   int
+	Message     string
+	Attempts    int
+	Email       string
+	Name        string
+}
+
+// dispatchDueReminders 发送到期的邮件提醒，并记录投递结果。
+func dispatchDueReminders(ctx context.Context, db *sql.DB, cfg config, send func(context.Context, string, string, string) error) (int, error) {
+	rows, err := db.QueryContext(ctx, `SELECT r.id,r.project_id,u.id,p.name,r.target_row,p.current_row,p.total_rows,r.message,r.attempts,u.email,u.name
+FROM project_reminders r
+JOIN projects p ON p.id=r.project_id
+JOIN users u ON u.id=p.user_id
+WHERE r.channel=? AND r.email_sent_at IS NULL AND r.is_done=FALSE AND r.remind_at IS NOT NULL AND r.remind_at<=NOW()
+  AND r.attempts<? AND p.status IN ('planning','in_progress') AND u.email_verified_at IS NOT NULL
+ORDER BY r.remind_at,r.id LIMIT ?`, reminderChannelEmail, reminderMaxAttempts, reminderDispatchBatch)
+	if err != nil {
+		return 0, err
+	}
+	items := make([]dueReminder, 0)
+	for rows.Next() {
+		var item dueReminder
+		if err := rows.Scan(&item.ID, &item.ProjectID, &item.UserID, &item.ProjectName, &item.TargetRow, &item.CurrentRow, &item.TotalRows, &item.Message, &item.Attempts, &item.Email, &item.Name); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		items = append(items, item)
+	}
+	rows.Close()
+
+	sent := 0
+	for _, item := range items {
+		subject, body := reminderEmailMessage(item.Name, item.ProjectName, item.TargetRow, item.CurrentRow, item.TotalRows, item.Message, cfg.appBaseURL, item.ProjectID)
+		if err := send(ctx, item.Email, subject, body); err != nil {
+			reason := err.Error()
+			if len(reason) > reminderErrorMaxCharacters {
+				reason = reason[:reminderErrorMaxCharacters]
+			}
+			_, _ = db.ExecContext(ctx, `UPDATE project_reminders SET attempts=attempts+1,last_error=? WHERE id=?`, reason, item.ID)
+			recordAudit(ctx, db, item.UserID, "reminder.email_failed", "project_reminder", item.ID, map[string]any{"projectId": item.ProjectID, "reason": reason})
+			continue
+		}
+		_, _ = db.ExecContext(ctx, `UPDATE project_reminders SET attempts=attempts+1,email_sent_at=NOW(),last_error=NULL WHERE id=?`, item.ID)
+		_, _ = db.ExecContext(ctx, `INSERT INTO project_activities (project_id,kind,detail) VALUES (?,'reminder_emailed',?)`, item.ProjectID, fmt.Sprintf("第 %d 行提醒已发送邮件", item.TargetRow))
+		recordAudit(ctx, db, item.UserID, "reminder.email_sent", "project_reminder", item.ID, map[string]any{"projectId": item.ProjectID})
+		sent++
+	}
+	return sent, nil
+}
+
+// startReminderDispatcher 每分钟检查一次到期提醒；未配置 SMTP 时不启动，避免把提醒误标为已发送。
+func startReminderDispatcher(ctx context.Context, db *sql.DB, cfg config) {
+	if strings.TrimSpace(cfg.smtpHost) == "" {
+		log.Printf("SMTP 未配置：邮件提醒调度器未启动")
+		return
+	}
+	send := func(ctx context.Context, to, subject, body string) error {
+		return sendAuthEmail(cfg, to, subject, body)
+	}
+	dispatch := func() {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		sent, err := dispatchDueReminders(ctx, db, cfg, send)
+		if err != nil {
+			log.Printf("reminder dispatch: %v", err)
+			return
+		}
+		if sent > 0 {
+			log.Printf("reminder dispatch: sent %d email(s)", sent)
+		}
+	}
+	go func() {
+		dispatch()
+		ticker := time.NewTicker(reminderDispatchInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				dispatch()
+			}
+		}
+	}()
+}
+
+// sendReminderEmailHandler 立即发送单条提醒，用于用户手动确认邮件通道是否可用。
+func sendReminderEmailHandler(db *sql.DB, cfg config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		account, ok := requireSignedIn(db, w, r)
+		if !ok {
+			return
+		}
+		if strings.TrimSpace(cfg.smtpHost) == "" {
+			writeJSON(w, 503, map[string]string{"error": "邮件服务尚未配置，请设置 SMTP_HOST"})
+			return
+		}
+		projectID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		reminderID, reminderErr := strconv.ParseInt(r.PathValue("reminderID"), 10, 64)
+		if err != nil || reminderErr != nil || !projectOwned(r.Context(), db, account.ID, projectID) {
+			writeJSON(w, 404, map[string]string{"error": "project not found"})
+			return
+		}
+		var item dueReminder
+		err = db.QueryRowContext(r.Context(), `SELECT r.id,r.project_id,u.id,p.name,r.target_row,p.current_row,p.total_rows,r.message,r.attempts,u.email,u.name
+FROM project_reminders r JOIN projects p ON p.id=r.project_id JOIN users u ON u.id=p.user_id
+WHERE r.id=? AND r.project_id=? AND p.user_id=?`, reminderID, projectID, account.ID).
+			Scan(&item.ID, &item.ProjectID, &item.UserID, &item.ProjectName, &item.TargetRow, &item.CurrentRow, &item.TotalRows, &item.Message, &item.Attempts, &item.Email, &item.Name)
+		if err == sql.ErrNoRows {
+			writeJSON(w, 404, map[string]string{"error": "reminder not found"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not load reminder"})
+			return
+		}
+		subject, body := reminderEmailMessage(item.Name, item.ProjectName, item.TargetRow, item.CurrentRow, item.TotalRows, item.Message, cfg.appBaseURL, item.ProjectID)
+		if err := sendAuthEmail(cfg, item.Email, subject, body); err != nil {
+			reason := err.Error()
+			if len(reason) > reminderErrorMaxCharacters {
+				reason = reason[:reminderErrorMaxCharacters]
+			}
+			_, _ = db.ExecContext(r.Context(), `UPDATE project_reminders SET attempts=attempts+1,last_error=? WHERE id=?`, reason, item.ID)
+			writeJSON(w, 502, map[string]string{"error": "邮件发送失败：" + reason})
+			return
+		}
+		if _, err := db.ExecContext(r.Context(), `UPDATE project_reminders SET attempts=attempts+1,email_sent_at=NOW(),last_error=NULL,channel=? WHERE id=?`, reminderChannelEmail, item.ID); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "邮件已发送，但提醒状态未能保存"})
+			return
+		}
+		_, _ = db.ExecContext(r.Context(), `INSERT INTO project_activities (project_id,kind,detail) VALUES (?,'reminder_emailed',?)`, item.ProjectID, fmt.Sprintf("第 %d 行提醒已发送邮件", item.TargetRow))
+		recordAudit(r.Context(), db, account.ID, "reminder.email_sent", "project_reminder", item.ID, map[string]any{"projectId": item.ProjectID, "manual": true})
+		writeJSON(w, 200, map[string]any{"data": map[string]string{"email": item.Email}})
+	}
+}
+
 func updateProjectHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		account, ok := requireSignedIn(db, w, r)
@@ -2678,6 +2975,23 @@ func newOpaqueToken() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
+// splitMailFrom 拆分“显示名 <地址>”形式，SMTP 信封发件人必须是裸地址，
+// 而 From 头可以带显示名。之前直接把带显示名的配置当信封发件人，
+// 会被 SMTP 服务器以 501 invalid FROM parameter 拒绝。
+func splitMailFrom(from string) (string, string) {
+	from = strings.TrimSpace(from)
+	if start := strings.Index(from, "<"); start >= 0 {
+		if end := strings.Index(from[start:], ">"); end > 0 {
+			display := strings.Trim(strings.TrimSpace(from[:start]), "\"")
+			address := strings.TrimSpace(from[start+1 : start+end])
+			if address != "" {
+				return display, address
+			}
+		}
+	}
+	return "", from
+}
+
 func sendAuthEmail(cfg config, recipient, subject, body string) error {
 	if strings.TrimSpace(cfg.smtpHost) == "" {
 		log.Printf("SMTP not configured; auth email for %s (%s): %s", recipient, subject, body)
@@ -2688,7 +3002,12 @@ func sendAuthEmail(cfg config, recipient, subject, body string) error {
 	if strings.TrimSpace(from) == "" {
 		from = "no-reply@localhost"
 	}
-	message := []byte("To: " + recipient + "\r\n" + "Subject: " + subject + "\r\n" + "Content-Type: text/plain; charset=UTF-8\r\n\r\n" + body)
+	displayName, envelopeFrom := splitMailFrom(from)
+	fromHeader := envelopeFrom
+	if displayName != "" {
+		fromHeader = displayName + " <" + envelopeFrom + ">"
+	}
+	message := []byte("From: " + fromHeader + "\r\n" + "To: " + recipient + "\r\n" + "Subject: " + subject + "\r\n" + "MIME-Version: 1.0\r\n" + "Content-Type: text/plain; charset=UTF-8\r\n\r\n" + body)
 	var auth smtp.Auth
 	if cfg.smtpUsername != "" {
 		auth = smtp.PlainAuth("", cfg.smtpUsername, cfg.smtpPassword, host)
@@ -2697,11 +3016,118 @@ func sendAuthEmail(cfg config, recipient, subject, body string) error {
 	if port == "" {
 		port = "587"
 	}
-	return smtp.SendMail(host+":"+port, auth, from, []string{recipient}, message)
+	return smtp.SendMail(host+":"+port, auth, envelopeFrom, []string{recipient}, message)
 }
 
 const maxMediaBytes int64 = 8 << 20
 const mediaQuotaBytes int64 = 100 << 20
+const maxPatternBytes int64 = 20 << 20
+const patternQuotaBytes int64 = 200 << 20
+
+var errPatternNotFound = errors.New("pattern file not found")
+
+func patternFileURL(id int64) string { return fmt.Sprintf("/api/pattern-files/%d/file", id) }
+
+func patternObjectKey(id int64, mimeType string) string {
+	ext := map[string]string{
+		"application/pdf": "pdf",
+		"image/jpeg":      "jpg",
+		"image/png":       "png",
+		"image/gif":       "gif",
+		"image/webp":      "webp",
+	}[mimeType]
+	if ext == "" {
+		ext = "bin"
+	}
+	return fmt.Sprintf("pattern-%d.%s", id, ext)
+}
+
+func patternMimeAllowed(fileType, mimeType string) bool {
+	if fileType == "pdf" {
+		return mimeType == "application/pdf"
+	}
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return fileType == "image"
+	}
+	return false
+}
+
+// decodeDataURL splits a base64 data URL into its media type and raw bytes.
+func decodeDataURL(data string) (string, []byte, error) {
+	if !strings.HasPrefix(data, "data:") {
+		return "", nil, errors.New("data url expected")
+	}
+	marker := strings.Index(data, ";base64,")
+	if marker < 5 {
+		return "", nil, errors.New("base64 payload expected")
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(data[5:marker]))
+	body, err := base64.StdEncoding.DecodeString(data[marker+len(";base64,"):])
+	if err != nil {
+		return "", nil, err
+	}
+	if len(body) == 0 {
+		return "", nil, errors.New("empty payload")
+	}
+	return mimeType, body, nil
+}
+
+// readPatternObject returns the pattern file bytes for its owner, migrating rows that
+// still keep base64 content in pattern_files.file_data into object storage on first read.
+func readPatternObject(ctx context.Context, db *sql.DB, store objectStore, userID, fileID int64) ([]byte, string, error) {
+	var owner int64
+	var objectKey, mimeType, fileData string
+	err := db.QueryRowContext(ctx, `SELECT user_id,COALESCE(object_key,''),mime_type,COALESCE(file_data,'') FROM pattern_files WHERE id=?`, fileID).Scan(&owner, &objectKey, &mimeType, &fileData)
+	if err != nil {
+		return nil, "", errPatternNotFound
+	}
+	if owner != userID {
+		return nil, "", errPatternNotFound
+	}
+	if objectKey != "" {
+		body, err := store.Get(ctx, objectKey)
+		return body, mimeType, err
+	}
+	legacyMime, body, err := decodeDataURL(fileData)
+	if err != nil {
+		return nil, "", err
+	}
+	key := patternObjectKey(fileID, legacyMime)
+	if err = store.Put(ctx, key, body, legacyMime); err != nil {
+		return nil, "", err
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE pattern_files SET object_key=?,mime_type=?,size_bytes=?,file_data=NULL WHERE id=?`, key, legacyMime, len(body), fileID); err != nil {
+		return nil, "", err
+	}
+	return body, legacyMime, nil
+}
+
+// backfillPatternFiles moves a bounded batch of legacy base64 rows into object storage.
+func backfillPatternFiles(ctx context.Context, db *sql.DB, store objectStore) {
+	rows, err := db.QueryContext(ctx, `SELECT id,user_id FROM pattern_files WHERE COALESCE(object_key,'')='' AND file_data IS NOT NULL ORDER BY id LIMIT 100`)
+	if err != nil {
+		return
+	}
+	type pending struct{ id, userID int64 }
+	var items []pending
+	for rows.Next() {
+		var item pending
+		if rows.Scan(&item.id, &item.userID) == nil {
+			items = append(items, item)
+		}
+	}
+	rows.Close()
+	migrated := 0
+	for _, item := range items {
+		if _, _, err := readPatternObject(ctx, db, store, item.userID, item.id); err == nil {
+			migrated++
+		}
+	}
+	if migrated > 0 {
+		log.Printf("migrated %d pattern file(s) to object storage", migrated)
+	}
+}
 
 func mediaPath(root string, id int64) string { return filepath.Join(root, fmt.Sprintf("%d.jpg", id)) }
 
