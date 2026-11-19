@@ -93,9 +93,9 @@
       <section><div class="section-header"><span class="num">01</span><h2>交付现状</h2></div><p class="intro">首个闭环已在代码中跑通：一个项目可以从创建走到归档、分享和导出，且带权限、版本与审计。缺的不是功能数量，而是把闭环交给真实用户之前必须补齐的几处工程与触达能力。</p>
         <div class="stat-grid">
           <div class="stat"><b>API 端点</b><strong>81</strong><small>覆盖项目、材料、图解、计算、权限与审计</small></div>
-          <div class="stat"><b>数据表</b><strong>25</strong><small>20 个编号迁移，一次初始化跑完并自动校验</small></div>
+          <div class="stat"><b>数据表</b><strong>26</strong><small>21 个编号迁移，一次初始化跑完并自动校验</small></div>
           <div class="stat"><b>前端页面</b><strong>6</strong><small>工作台 · 计算器 · 配色 · 内容 · 公开页 · 用户管理</small></div>
-          <div class="stat"><b>自动化验证</b><strong>20 + 3</strong><small>Go 用例与 Playwright 均在 CI 自动执行</small></div>
+          <div class="stat"><b>自动化验证</b><strong>21 + 4</strong><small>Go 用例与 Playwright 均在 CI 自动执行</small></div>
         </div>
       </section>
 
@@ -133,7 +133,7 @@
           <div class="mod"><h3>计算器</h3><p class="tag">CALCULATOR</p><ul><li>圆形起针与加针分布</li><li>密度换算：针数 / 行数 → 目标尺寸</li><li>用线量估算（含损耗预留）</li><li>计算记录可保存并回到项目</li></ul><span class="ev">POST /api/calculator/{circle|size|yarn} · calculation_records</span></div>
           <div class="mod"><h3>图解阅读与标注</h3><p class="tag">PATTERN</p><ul><li>上传 PDF / 图片，文件库统一管理</li><li>缩放、旋转、全屏、PDF 翻页渲染</li><li>按坐标钉标记，绑定行号与备注</li><li>当前行标记高亮、按页筛选</li></ul><span class="ev">pattern_files（对象存储）· pattern_annotations · pdfjs-dist</span></div>
           <div class="mod"><h3>内容与学习</h3><p class="tag">CONTENT</p><ul><li>针法词典：符号、缩写、检索、收藏</li><li>文字针法 → 编号步骤草稿</li><li>图解问答（需配置 OPENAI_API_KEY）</li><li>作品公开页：完成照、材料、备注可控</li></ul><span class="ev">/api/stitch-terms · /api/content/ask · /api/share/{token}</span></div>
-          <div class="mod"><h3>配色与效率</h3><p class="tag">PALETTE</p><ul><li>同色系 / 邻近 / 互补 / 三角 四套规则</li><li>HSL 距离匹配自有线材并看库存</li><li>一键写入项目配色</li><li>月度洞察：作品数、行数、工时</li></ul><span class="ev">/api/insights/monthly · projects.palette</span></div>
+          <div class="mod"><h3>配色与效率</h3><p class="tag">PALETTE</p><ul><li>10 组内置配色模板，可按风格筛选</li><li>同色系 / 邻近 / 互补 / 三角 四套算法规则</li><li>HSL 距离匹配自有线材并看库存</li><li>收藏当前配色为自建模板，可删除</li><li>一键写入项目配色</li><li>月度洞察：作品数、行数、工时</li></ul><span class="ev">/api/palette-templates · /api/insights/monthly · projects.palette</span></div>
           <div class="mod"><h3>账户与权限</h3><p class="tag">ACCOUNT</p><ul><li>邮箱注册 / 登录 / 会话与退出</li><li>邮箱验证、密码重置（SMTP）</li><li>15 类细粒度权限覆盖，可逐用户授权</li><li>审计事件流、账号删除</li></ul><span class="ev">/api/auth/* · user_permissions · audit_events</span></div>
           <div class="mod"><h3>基础设施</h3><p class="tag">PLATFORM</p><ul><li>封面/照片与图解统一走本地目录或 S3 兼容存储</li><li>健康检查、启动引导管理员</li><li>18 个版本化迁移，一次初始化跑完并由 CI 校验</li><li>CI：后端测试、前端 lint/构建、迁移验证、Playwright 冒烟</li><li>离线变更队列与 Service Worker 缓存</li></ul><span class="ev">media_assets · GET /api/health · offline.ts</span></div>
         </div>
@@ -174,6 +174,7 @@
           <tr><td>试点与指标</td><td><span class="chip chip-part">部分</span></td><td>月度洞察、活动流、审计</td><td>无埋点 SDK 与看板（阶段 3）</td></tr>
           <tr><td>图解标注与行高亮</td><td><span class="chip chip-done">已交付</span></td><td>坐标标记 + 行号绑定 + 当前行高亮</td><td>区域/颜色标注粒度（阶段 4 收尾）</td></tr>
           <tr><td>针法词典与学习路径</td><td><span class="chip chip-part">部分</span></td><td>词典、检索、收藏</td><td>学习内容与短视频（P1-07）</td></tr>
+          <tr><td>配色推荐</td><td><span class="chip chip-done">已交付</span></td><td>10 组内置模板 + 四条 HSL 规则 + 库存匹配 + 自建收藏</td><td>按作品照片取色（阶段 5）</td></tr>
           <tr><td>库存与成本</td><td><span class="chip chip-part">部分</span></td><td>库存、余量、补货清单、工时计时</td><td>成本合成与报表（P1-08）</td></tr>
           <tr><td>归档与分享</td><td><span class="chip chip-done">已交付</span></td><td>完成照、标签、公开链接、可控字段</td><td>水印与访问统计（阶段 5）</td></tr>
           <tr><td>高级导出</td><td><span class="chip chip-part">部分</span></td><td>项目记录 PDF 导出</td><td>批量导出与会员分级（P2-12）</td></tr>
@@ -216,7 +217,7 @@
 
       <section><div class="callout"><b>当前建议：</b>功能面足够进入试点了，先把剩下三件 P0 做完——CI 卡口、邮件触达、可观测与恢复演练。这四项补齐之前招种子用户，拿回来的反馈会混着基础设施故障的噪声，看不清产品本身。</div></section>
     </main>
-    <footer>线禾 · 钩织应用实施路线图 · 交付状态 2026.08 · 82 API / 25 表 / 20 迁移</footer>
+    <footer>线禾 · 钩织应用实施路线图 · 交付状态 2026.08 · 85 API / 26 表 / 21 迁移</footer>
   </div>
 </body>
 </html>

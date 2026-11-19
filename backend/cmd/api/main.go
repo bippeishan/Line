@@ -22,6 +22,7 @@ import (
 	"net/smtp"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -69,6 +70,23 @@ type s3ObjectStore struct {
 	bucket string
 }
 
+type paletteTemplate struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Style       string    `json:"style"`
+	Occasion    string    `json:"occasion"`
+	Description string    `json:"description"`
+	Colors      []string  `json:"colors"`
+	IsBuiltin   bool      `json:"isBuiltin"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+type createPaletteTemplateRequest struct {
+	Name        string   `json:"name"`
+	Style       string   `json:"style"`
+	Occasion    string   `json:"occasion"`
+	Description string   `json:"description"`
+	Colors      []string `json:"colors"`
+}
 type pattern struct {
 	ID              int64  `json:"id"`
 	Title           string `json:"title"`
@@ -542,6 +560,9 @@ func main() {
 	mux.HandleFunc("GET /api/insights/monthly", monthlyInsightsHandler(db))
 	mux.HandleFunc("POST /api/projects/{id}/accessories", createProjectAccessoryHandler(db))
 	mux.HandleFunc("DELETE /api/projects/{id}/accessories/{accessoryID}", deleteProjectAccessoryHandler(db))
+	mux.HandleFunc("GET /api/palette-templates", permissionHandler(db, "project.read", paletteTemplatesHandler(db)))
+	mux.HandleFunc("POST /api/palette-templates", permissionHandler(db, "project.write", createPaletteTemplateHandler(db)))
+	mux.HandleFunc("DELETE /api/palette-templates/{id}", permissionHandler(db, "project.write", deletePaletteTemplateHandler(db)))
 	mux.HandleFunc("GET /api/pattern-files", patternFilesHandler(db))
 	mux.HandleFunc("POST /api/pattern-files", createPatternFileHandler(db, store))
 	mux.HandleFunc("GET /api/pattern-files/{id}/file", patternFileContentHandler(db, store))
@@ -4025,6 +4046,146 @@ func patternsHandler(db *sql.DB) http.HandlerFunc {
 			items = append(items, item)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
+}
+
+var paletteHexPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
+// validatePaletteTemplate 校验配色模板：名称必填，2–6 个 #RRGGBB 颜色且不得重复。
+func validatePaletteTemplate(name string, colors []string) (string, []string, error) {
+	name = strings.TrimSpace(name)
+	if len([]rune(name)) < 1 || len([]rune(name)) > 60 {
+		return "", nil, fmt.Errorf("名称需要 1 到 60 个字符")
+	}
+	if len(colors) < 2 || len(colors) > 6 {
+		return "", nil, fmt.Errorf("一组配色需要 2 到 6 个颜色")
+	}
+	normalized := make([]string, 0, len(colors))
+	seen := map[string]bool{}
+	for _, color := range colors {
+		color = strings.ToUpper(strings.TrimSpace(color))
+		if !paletteHexPattern.MatchString(color) {
+			return "", nil, fmt.Errorf("颜色需要 #RRGGBB 格式")
+		}
+		if seen[color] {
+			return "", nil, fmt.Errorf("配色里有重复颜色")
+		}
+		seen[color] = true
+		normalized = append(normalized, color)
+	}
+	return name, normalized, nil
+}
+
+func scanPaletteTemplate(scan func(...any) error) (paletteTemplate, error) {
+	var item paletteTemplate
+	var raw []byte
+	if err := scan(&item.ID, &item.Name, &item.Style, &item.Occasion, &item.Description, &raw, &item.IsBuiltin, &item.CreatedAt); err != nil {
+		return item, err
+	}
+	item.Colors = []string{}
+	_ = json.Unmarshal(raw, &item.Colors)
+	for index, color := range item.Colors {
+		item.Colors[index] = strings.ToUpper(color)
+	}
+	return item, nil
+}
+
+func paletteTemplatesHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		account, ok := requireSignedIn(db, w, r)
+		if !ok {
+			return
+		}
+		style := strings.TrimSpace(r.URL.Query().Get("style"))
+		query := `SELECT id,name,style,occasion,description,colors,is_builtin,created_at FROM palette_templates WHERE (is_builtin=TRUE OR user_id=?)`
+		args := []any{account.ID}
+		if style != "" {
+			query += ` AND style=?`
+			args = append(args, style)
+		}
+		query += ` ORDER BY is_builtin DESC,id`
+		rows, err := db.QueryContext(r.Context(), query, args...)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not load palette templates"})
+			return
+		}
+		defer rows.Close()
+		items := make([]paletteTemplate, 0)
+		for rows.Next() {
+			item, err := scanPaletteTemplate(rows.Scan)
+			if err != nil {
+				writeJSON(w, 500, map[string]string{"error": "could not read palette template"})
+				return
+			}
+			items = append(items, item)
+		}
+		writeJSON(w, 200, map[string]any{"data": items})
+	}
+}
+
+func createPaletteTemplateHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		account, ok := requireSignedIn(db, w, r)
+		if !ok {
+			return
+		}
+		var input createPaletteTemplateRequest
+		if json.NewDecoder(r.Body).Decode(&input) != nil {
+			writeJSON(w, 400, map[string]string{"error": "invalid request body"})
+			return
+		}
+		name, colors, err := validatePaletteTemplate(input.Name, input.Colors)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		style := strings.TrimSpace(input.Style)
+		if len([]rune(style)) > 40 || len([]rune(strings.TrimSpace(input.Occasion))) > 40 || len([]rune(strings.TrimSpace(input.Description))) > 200 {
+			writeJSON(w, 400, map[string]string{"error": "风格、题材或说明过长"})
+			return
+		}
+		raw, _ := json.Marshal(colors)
+		result, err := db.ExecContext(r.Context(), `INSERT INTO palette_templates (user_id,name,style,occasion,description,colors,is_builtin) VALUES (?,?,?,?,?,?,FALSE)`, account.ID, name, style, strings.TrimSpace(input.Occasion), strings.TrimSpace(input.Description), raw)
+		if err != nil {
+			if strings.Contains(err.Error(), "uk_palette_templates_owner_name") || strings.Contains(err.Error(), "Duplicate entry") {
+				writeJSON(w, 409, map[string]string{"error": "已有同名配色，换个名字吧"})
+				return
+			}
+			writeJSON(w, 500, map[string]string{"error": "could not save palette template"})
+			return
+		}
+		id, _ := result.LastInsertId()
+		recordAudit(r.Context(), db, account.ID, "palette.create", "palette_template", id, map[string]any{"name": name, "colors": colors})
+		writeJSON(w, 201, map[string]any{"data": map[string]any{"id": id, "name": name, "colors": colors}})
+	}
+}
+
+func deletePaletteTemplateHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		account, ok := requireSignedIn(db, w, r)
+		if !ok {
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id < 1 {
+			writeJSON(w, 400, map[string]string{"error": "invalid palette template id"})
+			return
+		}
+		var builtin bool
+		if err := db.QueryRowContext(r.Context(), `SELECT is_builtin FROM palette_templates WHERE id=? AND user_id=?`, id, account.ID).Scan(&builtin); err != nil {
+			writeJSON(w, 404, map[string]string{"error": "palette template not found"})
+			return
+		}
+		if builtin {
+			writeJSON(w, 400, map[string]string{"error": "内置配色不能删除"})
+			return
+		}
+		if _, err = db.ExecContext(r.Context(), `DELETE FROM palette_templates WHERE id=? AND user_id=?`, id, account.ID); err != nil {
+			writeJSON(w, 500, map[string]string{"error": "could not delete palette template"})
+			return
+		}
+		recordAudit(r.Context(), db, account.ID, "palette.delete", "palette_template", id, map[string]any{})
+		w.WriteHeader(204)
 	}
 }
 

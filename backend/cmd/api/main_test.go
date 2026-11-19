@@ -393,3 +393,29 @@ func TestSplitMailFrom(t *testing.T) {
 		}
 	}
 }
+
+func TestValidatePaletteTemplate(t *testing.T) {
+	name, colors, err := validatePaletteTemplate("  莓果拿铁 ", []string{"#c8ab8d", "#9A3b52"})
+	if err != nil {
+		t.Fatalf("expected valid template, got %v", err)
+	}
+	if name != "莓果拿铁" || len(colors) != 2 || colors[1] != "#9A3B52" {
+		t.Fatalf("expected trimmed name and upper-case colors, got %q %#v", name, colors)
+	}
+	if _, _, err := validatePaletteTemplate("", []string{"#c8ab8d", "#9a3b52"}); err == nil {
+		t.Fatal("expected empty name to fail")
+	}
+	if _, _, err := validatePaletteTemplate("单色", []string{"#c8ab8d"}); err == nil {
+		t.Fatal("expected a single color to fail")
+	}
+	if _, _, err := validatePaletteTemplate("坏色值", []string{"#c8ab8d", "9a3b52"}); err == nil {
+		t.Fatal("expected a non-hex color to fail")
+	}
+	if _, _, err := validatePaletteTemplate("重复", []string{"#c8ab8d", "#C8AB8D"}); err == nil {
+		t.Fatal("expected duplicate colors to fail")
+	}
+	tooMany := []string{"#111111", "#222222", "#333333", "#444444", "#555555", "#666666", "#777777"}
+	if _, _, err := validatePaletteTemplate("太多", tooMany); err == nil {
+		t.Fatal("expected more than six colors to fail")
+	}
+}

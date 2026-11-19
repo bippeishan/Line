@@ -66,8 +66,8 @@ for file in $(ls "$MIGRATION_DIR"/*.sql | sort); do
 done
 
 # 迁移脚本必须可重复执行：守卫写法（information_schema / IF NOT EXISTS）覆盖的编号再跑一次。
-echo "重跑带守卫的迁移（011–013、019、020）："
-for name in 011_shopping_list.sql 012_project_yarn_plans.sql 013_project_schedule.sql 019_reminder_delivery.sql 020_project_defaults.sql; do
+echo "重跑带守卫的迁移（011–013、019–021）："
+for name in 011_shopping_list.sql 012_project_yarn_plans.sql 013_project_schedule.sql 019_reminder_delivery.sql 020_project_defaults.sql 021_palette_templates.sql; do
   if ! run_sql < "$MIGRATION_DIR/$name" >/dev/null; then
     echo "迁移不可重复执行: $name" >&2
     exit 1
@@ -87,7 +87,7 @@ expect() {
     echo "  ✓ $3"
   fi
 }
-expect "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_VERIFY_DATABASE'" 25 "25 张表"
+expect "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_VERIFY_DATABASE'" 26 "26 张表"
 for column in pattern_files.object_key pattern_files.mime_type pattern_files.size_bytes pattern_annotations.row_number \
   projects.pattern_file_id projects.completion_photo_data projects.palette projects.work_tags projects.share_token \
   projects.target_date projects.weekly_focus_minutes projects.version users.email_verified_at \
@@ -98,11 +98,13 @@ for column in pattern_files.object_key pattern_files.mime_type pattern_files.siz
   expect "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='$MYSQL_VERIFY_DATABASE' AND table_name='$table' AND column_name='$column'" 1 "$table.$column"
 done
 for table in media_assets audit_events user_permissions stitch_terms user_stitch_favorites calculation_records \
-  project_timers project_reminders project_yarn_plans project_accessories shopping_items pattern_annotations; do
+  project_timers project_reminders project_yarn_plans project_accessories shopping_items pattern_annotations \
+  palette_templates; do
   expect "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_VERIFY_DATABASE' AND table_name='$table'" 1 "表 $table"
 done
 expect "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='$MYSQL_VERIFY_DATABASE' AND table_name='pattern_files' AND column_name='file_data' AND is_nullable='YES'" 1 "pattern_files.file_data 允许为空"
 expect "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='$MYSQL_VERIFY_DATABASE' AND table_name='projects' AND column_name='completion_note' AND column_default IS NOT NULL" 1 "projects.completion_note 有默认值"
+expect "SELECT COUNT(*) FROM palette_templates WHERE is_builtin=TRUE" 10 "10 个内置配色模板"
 
 # 冒烟：创建项目不能依赖应用层补字段（历史上 1364 就出在这里）。
 run_sql -e "INSERT INTO users (name,email,role) VALUES ('迁移校验','verify@line.local','user') ON DUPLICATE KEY UPDATE name=VALUES(name)" >/dev/null
@@ -113,4 +115,4 @@ if [ "$failures" -ne 0 ]; then
   echo "结构校验失败 $failures 项" >&2
   exit 1
 fi
-echo "迁移验证通过：001–020 可全量执行且可重复。"
+echo "迁移验证通过：001–021 可全量执行且可重复。"
