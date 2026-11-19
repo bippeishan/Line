@@ -47,9 +47,15 @@ test.describe('提醒邮件触达', () => {
     expect(delivered.attempts).toBe(1)
     expect(delivered.lastError).toBe('')
 
-    const inbox = await page.request.get(`${mailpitURL}/api/v1/messages?limit=20`)
-    const messages = (await inbox.json()).messages as Array<{ ID: string; Subject: string; To: Array<{ Address: string }> }>
-    const mail = messages.find((item) => item.Subject.includes(projectName))
+    // 邮件投递是异步的，轮询收件箱而不是立刻断言。
+    type MailpitMessage = { ID: string; Subject: string; To: Array<{ Address: string }> }
+    let mail: MailpitMessage | undefined
+    for (let attempt = 0; attempt < 20 && !mail; attempt++) {
+      if (attempt > 0) await page.waitForTimeout(500)
+      const inbox = await page.request.get(`${mailpitURL}/api/v1/messages?limit=20`)
+      const messages = (await inbox.json()).messages as MailpitMessage[]
+      mail = messages.find((item) => item.Subject.includes(projectName))
+    }
     expect(mail, '提醒邮件应该出现在 Mailpit 收件箱').toBeTruthy()
     expect(mail!.Subject).toContain('第 24 行')
     expect(mail!.To[0].Address).toBe('admin@line.local')

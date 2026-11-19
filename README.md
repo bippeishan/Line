@@ -73,7 +73,7 @@ SHOW COLUMNS FROM projects LIKE 'completion_note';
 ## 常用命令
 
 ```bash
-./scripts/verify-migrations.sh    # 在临时库 line_verify 上全量跑 001–020 并校验结构
+./scripts/verify-migrations.sh    # 在临时库 line_verify 上全量跑 001–020 并校验结构（无 mysql 客户端时自动用 mysql:8.4 容器，MYSQL_CLIENT=cli|docker 可强制）
 docker compose up -d              # 启动本地 MySQL 与 API
 cd backend && go test -race ./... # 后端测试
 cd frontend && npm run lint       # 前端 ESLint

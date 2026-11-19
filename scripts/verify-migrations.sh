@@ -7,7 +7,7 @@
 #   MYSQL_HOST=127.0.0.1 MYSQL_PORT=3306 ./scripts/verify-migrations.sh
 #
 # 环境变量：MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_VERIFY_DATABASE / MYSQL_WAIT_SECONDS
-# 优先使用本机 mysql 客户端；没有时回退到 mysql:8.4 容器。
+#          MYSQL_CLIENT=auto|cli|docker  客户端选择，默认 auto（优先本机 mysql，回退 mysql:8.4 容器）
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,12 +19,18 @@ MYSQL_PASSWORD="${MYSQL_PASSWORD:-root_secret}"
 MYSQL_VERIFY_DATABASE="${MYSQL_VERIFY_DATABASE:-line_verify}"
 MYSQL_WAIT_SECONDS="${MYSQL_WAIT_SECONDS:-60}"
 
+MYSQL_CLIENT_MODE="${MYSQL_CLIENT:-auto}"
 mysql_client=()
-if command -v mysql >/dev/null 2>&1; then
+if [ "$MYSQL_CLIENT_MODE" != "docker" ] && command -v mysql >/dev/null 2>&1; then
   mysql_client=(mysql --protocol=TCP -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER")
 elif command -v docker >/dev/null 2>&1; then
-  mysql_client=(docker run --rm -i --add-host=host.docker.internal:host-gateway mysql:8.4 \
-    mysql --protocol=TCP -h"$MYSQL_HOST" -P"$MYSQL_PORT" -u"$MYSQL_USER")
+  # 容器里的 127.0.0.1 指向容器自身，换成 host-gateway 才能连到宿主上映射出来的 MySQL。
+  case "$MYSQL_HOST" in
+    127.0.0.1|localhost|::1) docker_host="host.docker.internal" ;;
+    *) docker_host="$MYSQL_HOST" ;;
+  esac
+  mysql_client=(docker run --rm -i -e MYSQL_PWD --add-host=host.docker.internal:host-gateway mysql:8.4 \
+    mysql --protocol=TCP -h"$docker_host" -P"$MYSQL_PORT" -u"$MYSQL_USER")
 else
   echo "需要 mysql 客户端或 docker 才能验证迁移" >&2
   exit 1
