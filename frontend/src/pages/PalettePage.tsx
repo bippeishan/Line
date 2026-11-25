@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { PictureOutlined } from '@ant-design/icons'
 import { Button, Empty, Form, Input, Modal, Popconfirm, Select, Tag, Upload, message } from 'antd'
 import { extractPhotoPalette, type ExtractedColor } from '../photoPalette'
+import { analyzePalette, hexToRgba, yarnTexture } from '../colorInsight'
 
-type Yarn = { id: number; name: string; color: string; colorHex: string; remainingGrams: number }
+type Yarn = { id: number; name: string; color: string; colorHex: string; remainingGrams: number; photoData: string }
 type Project = { id: number; name: string; palette: string[]; status: string; [key: string]: unknown }
 type PaletteTemplate = { id: number; name: string; style: string; occasion: string; description: string; colors: string[]; isBuiltin: boolean; createdAt: string }
 type TemplateForm = { name: string; style?: string; occasion?: string; description?: string }
@@ -34,11 +35,13 @@ export default function PalettePage({ onBack }: { onBack: () => void }) {
   const [suggesting, setSuggesting] = useState(false)
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [appliedColors, setAppliedColors] = useState<string[] | null>(null)
+  const [textures, setTextures] = useState<Record<string, string>>({})
 
   const template = templates.find((item) => item.id === templateId)
   const colors = appliedColors ?? (template ? template.colors : palette(base, scheme))
   const availableYarns = yarns.filter((item) => /^#[0-9a-fA-F]{6}$/.test(item.colorHex))
   const matches = colors.map((color) => recommendYarn(color, availableYarns))
+  const analysis = analyzePalette(colors)
   const visibleTemplates = styleFilter ? templates.filter((item) => item.style === styleFilter) : templates
   const styleOptions = Array.from(new Set(templates.map((item) => item.style).filter(Boolean)))
 
@@ -49,6 +52,18 @@ export default function PalettePage({ onBack }: { onBack: () => void }) {
     fetch('/api/projects').then((response) => response.ok ? response.json() : Promise.reject()).then(({ data }) => setProjects(data)).catch(() => undefined)
     loadTemplates()
   }, [])
+
+  // 用料匹配到的线材如果带照片，就把照片裁成小方块当色卡纹理。
+  useEffect(() => {
+    const sources = matches.map((item) => item?.yarn.photoData).filter((value): value is string => !!value && !(value in textures))
+    if (!sources.length) return
+    let cancelled = false
+    void Promise.all(sources.map(async (source) => [source, (await yarnTexture(source)) ?? ''] as const)).then((entries) => {
+      if (cancelled) return
+      setTextures((current) => ({ ...current, ...Object.fromEntries(entries.filter(([, value]) => value)) }))
+    })
+    return () => { cancelled = true }
+  }, [matches.map((item) => item?.yarn.photoData ?? '').join('|')])
 
   const applyTemplate = (item: PaletteTemplate) => {
     setAppliedColors(null)
@@ -201,15 +216,19 @@ export default function PalettePage({ onBack }: { onBack: () => void }) {
           <Button type="primary" onClick={suggestFromPhoto} loading={suggesting} disabled={picked.length < 2}>生成配色组合（已选 {picked.length}）</Button>
           <span>从勾选的颜色里挑 2–4 个，按色相、明度层次与饱和度结构打分。</span>
         </div>
-        {suggestions.length > 0 && <div className="suggestion-list">{suggestions.map((item) => <article key={item.name + item.colors.join('-')} className="suggestion">
+        {suggestions.length > 0 && <div className="suggestion-list">{suggestions.map((item) => {
+          const insight = analyzePalette(item.colors)
+          const warnings = insight.issues.filter((issue) => issue.severity === 'warn')
+          return <article key={item.name + item.colors.join('-')} className="suggestion">
           <div className="suggestion-head"><b>{item.name}</b><Tag color={item.score >= 80 ? 'green' : item.score >= 65 ? 'gold' : 'default'}>{item.score.toFixed(1)} 分</Tag></div>
           <div className="suggestion-colors">{item.colors.map((color) => <span key={color} style={{ background: color }} title={color}>{color}</span>)}</div>
           <p>{item.reason}</p>
+          {warnings.length > 0 && <p className="suggestion-warning">{warnings[0].message}</p>}
           <div className="suggestion-actions">
             <Button size="small" onClick={() => applySuggestion(item)}>套用到下方</Button>
             <Button size="small" type="text" onClick={() => saveSuggestion(item)}>存为模板</Button>
           </div>
-        </article>)}</div>}
+        </article>})}</div>}
       </>}
     </section>
 
@@ -250,7 +269,29 @@ export default function PalettePage({ onBack }: { onBack: () => void }) {
         <Button onClick={() => setSaveOpen(true)}>收藏这组配色</Button>
         <p>{template ? `当前使用模板「${template.name}」，改动基准色会自动切回算法生成。` : availableYarns.length ? '按 HSL 色相、饱和度、明度匹配，并优先推荐库存充足的线材。' : '先在线材库中补充标准色值，即可匹配真实库存。'}</p>
       </div>
-      <div className="palette-result">{colors.map((color, index) => <div key={color + index} style={{ background: color }}><span>0{index + 1}</span><strong>{color.toUpperCase()}</strong><small>{matches[index] ? <>{matches[index]!.yarn.name} · HSL 距离 {matches[index]!.distance}<br />库存 {matches[index]!.yarn.remainingGrams}g · {matches[index]!.reason}</> : '库存中未找到可用线材'}</small></div>)}</div>
+      <div className="palette-work-main">
+        <div className="palette-result">{colors.map((color, index) => {
+          const matched = matches[index]
+          const texture = matched ? textures[matched.yarn.photoData] : ''
+          return <div key={color + index} data-texture={texture ? 'yarn' : 'flat'} style={{ backgroundColor: color, color: analysis.textColors[index], backgroundImage: texture ? `linear-gradient(${hexToRgba(color, .74)}, ${hexToRgba(color, .74)}), url(${texture})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+            <span>0{index + 1}{texture ? ' · 实物' : ''}</span>
+            <strong>{color.toUpperCase()}</strong>
+            <small>{matched ? <>{matched.yarn.name} · HSL 距离 {matched.distance}<br />库存 {matched.yarn.remainingGrams}g · {matched.reason}</> : '库存中未找到可用线材'}</small>
+          </div>
+        })}</div>
+        <section className={analysis.issues.length ? 'palette-insights warn' : 'palette-insights'}>
+          <div className="insight-head">
+            <p className="eyebrow">CONTRAST CHECK</p>
+            <span>{analysis.issues.some((issue) => issue.severity === 'warn') ? `${analysis.issues.filter((issue) => issue.severity === 'warn').length} 处需要注意` : '这组配色可辨性没问题'}</span>
+          </div>
+          {analysis.issues.length === 0
+            ? <p className="insight-ok">明暗与色相都拉开了距离，行数不容易数错；色弱视角下也能区分。</p>
+            : <ul>{analysis.issues.map((issue, index) => <li key={index} className={issue.severity}>
+              <span className="insight-colors">{issue.colors.slice(0, 2).map((color) => <i key={color} style={{ background: color }} />)}</span>
+              <span>{issue.message}</span>
+            </li>)}</ul>}
+        </section>
+      </div>
     </section>
 
     <section className="palette-project-link">

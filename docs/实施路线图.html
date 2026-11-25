@@ -95,7 +95,7 @@
           <div class="stat"><b>API 端点</b><strong>81</strong><small>覆盖项目、材料、图解、计算、权限与审计</small></div>
           <div class="stat"><b>数据表</b><strong>26</strong><small>21 个编号迁移，一次初始化跑完并自动校验</small></div>
           <div class="stat"><b>前端页面</b><strong>6</strong><small>工作台 · 计算器 · 配色 · 内容 · 公开页 · 用户管理</small></div>
-          <div class="stat"><b>自动化验证</b><strong>25 + 5</strong><small>Go 用例与 Playwright 均在 CI 自动执行</small></div>
+          <div class="stat"><b>自动化验证</b><strong>25 + 7</strong><small>Go 用例与 Playwright 均在 CI 自动执行</small></div>
         </div>
       </section>
 
@@ -133,7 +133,7 @@
           <div class="mod"><h3>计算器</h3><p class="tag">CALCULATOR</p><ul><li>圆形起针与加针分布</li><li>密度换算：针数 / 行数 → 目标尺寸</li><li>用线量估算（含损耗预留）</li><li>计算记录可保存并回到项目</li></ul><span class="ev">POST /api/calculator/{circle|size|yarn} · calculation_records</span></div>
           <div class="mod"><h3>图解阅读与标注</h3><p class="tag">PATTERN</p><ul><li>上传 PDF / 图片，文件库统一管理</li><li>缩放、旋转、全屏、PDF 翻页渲染</li><li>按坐标钉标记，绑定行号与备注</li><li>当前行标记高亮、按页筛选</li></ul><span class="ev">pattern_files（对象存储）· pattern_annotations · pdfjs-dist</span></div>
           <div class="mod"><h3>内容与学习</h3><p class="tag">CONTENT</p><ul><li>针法词典：符号、缩写、检索、收藏</li><li>文字针法 → 编号步骤草稿</li><li>图解问答（需配置 OPENAI_API_KEY）</li><li>作品公开页：完成照、材料、备注可控</li></ul><span class="ev">/api/stitch-terms · /api/content/ask · /api/share/{token}</span></div>
-          <div class="mod"><h3>配色与效率</h3><p class="tag">PALETTE</p><ul><li>照片取色：本地量化主色，勾选后由后端打分出组合</li><li>10 组内置配色模板，可按风格筛选</li><li>同色系 / 邻近 / 互补 / 三角 四套算法规则</li><li>HSL 距离匹配自有线材并看库存</li><li>收藏当前配色为自建模板，可删除</li><li>一键写入项目配色</li><li>月度洞察：作品数、行数、工时</li></ul><span class="ev">/api/palette-suggest · /api/palette-templates · projects.palette</span></div>
+          <div class="mod"><h3>配色与效率</h3><p class="tag">PALETTE</p><ul><li>照片取色：本地量化主色，勾选后由后端打分出组合</li><li>10 组内置配色模板，可按风格筛选</li><li>同色系 / 邻近 / 互补 / 三角 四套算法规则</li><li>HSL 距离匹配自有线材并看库存</li><li>色卡按亮度自动反色，并用真实线材照片做纹理</li><li>WCAG 对比度 + CIE76 色差 + 红绿色弱模拟的可辨性提醒</li><li>收藏当前配色为自建模板，可删除</li><li>一键写入项目配色</li><li>月度洞察：作品数、行数、工时</li></ul><span class="ev">/api/palette-suggest · /api/palette-templates · projects.palette</span></div>
           <div class="mod"><h3>账户与权限</h3><p class="tag">ACCOUNT</p><ul><li>邮箱注册 / 登录 / 会话与退出</li><li>邮箱验证、密码重置（SMTP）</li><li>15 类细粒度权限覆盖，可逐用户授权</li><li>审计事件流、账号删除</li></ul><span class="ev">/api/auth/* · user_permissions · audit_events</span></div>
           <div class="mod"><h3>基础设施</h3><p class="tag">PLATFORM</p><ul><li>封面/照片与图解统一走本地目录或 S3 兼容存储</li><li>健康检查、启动引导管理员</li><li>18 个版本化迁移，一次初始化跑完并由 CI 校验</li><li>CI：后端测试、前端 lint/构建、迁移验证、Playwright 冒烟</li><li>离线变更队列与 Service Worker 缓存</li></ul><span class="ev">media_assets · GET /api/health · offline.ts</span></div>
         </div>
@@ -213,11 +213,22 @@
         <li>明确试点名单与访谈脚本，把阶段 0 的验证证据补齐。</li>
       </ul></section>
 
-      <section><div class="section-header"><span class="num">13</span><h2>决策检查点</h2></div><table><thead><tr><th>时间点</th><th>必答问题</th><th>继续条件</th></tr></thead><tbody><tr><td>阶段 0 结束</td><td>用户是否确实会反复使用计数与断点恢复？</td><td>高优痛点成立，且原型任务成功率达标</td></tr><tr><td>MVP 内测结束</td><td>用户是否在一周后回来继续同一项目？</td><td>首周留存/访谈结果支持投入效率层</td></tr><tr><td>v1.1 结束</td><td>个人资产功能是否提高留存或付费意愿？</td><td>有显著行为证据后再建设作者平台</td></tr><tr><td>作者试点结束</td><td>是否有稳定的内容供给与购买意向？</td><td>再扩展交易、结算与公开社区</td></tr></tbody></table></section>
+      <section><div class="section-header"><span class="num">13</span><h2>功能池：后续候选</h2></div>
+        <p class="intro">参考 colorwork.studio/swatch 的能力盘点，以下四项明确记入清单，但排在试点验证之后。每项都写清要解决的问题与前置条件。</p>
+        <table class="matrix"><thead><tr><th>功能</th><th>阶段</th><th>要解决</th><th>前置条件</th></tr></thead><tbody>
+          <tr><td>4 · 线材结构化<br /><span class="chip chip-gap">待排期</span></td><td>阶段 4</td><td>把品牌 / 线名 / 线重（lace–bulky）/ 色号拆成可枚举字段，才能按图解要求的线重筛选、按色系检索、按米克换算用量。现在全是自由文本。</td><td>021 之后的迁移编号；线重枚举与 CYC 标准对齐；老数据回填策略</td></tr>
+          <tr><td>5 · 图表编辑器<br /><span class="chip chip-todo">未开始</span></td><td>阶段 5</td><td>用户自己画/改配色图：选择、涂料、填充、翻转旋转、查找替换、符号键，配键盘快捷键。现在只有只读阅读器 + 坐标标注。</td><td>图解数据模型从「文件」升级为「格子矩阵」；阶段 4 标注先稳定</td></tr>
+          <tr><td>6 · WebGL 线材渲染<br /><span class="chip chip-todo">未开始</span></td><td>阶段 5–6</td><td>让色块像真实纱线（花杂、混色、marled）而不是纯色。当前用用户自己的线材照片裁片做纹理，只覆盖用户拍过的线。</td><td>授权色卡图库或拍摄流程；纹理压缩与移动端性能预算</td></tr>
+          <tr><td>7 · 免费额度体系<br /><span class="chip chip-todo">未开始</span></td><td>阶段 5</td><td>按账号限制图解数量、颜色数、私有作品与导出次数，作为付费墙与成本护栏。当前无任何配额（除媒体 100 MB / 图解 200 MB）。</td><td>先有付费意愿证据；与用户权限、审计打通</td></tr>
+        </tbody></table>
+        <div class="callout" style="margin-top:18px"><b>排序理由：</b>这四项都不改善「数错行」这个北极星问题，属于能力扩张。阶段 3 试点拿到留存数据前，只做能直接降低数错与中断成本的事。</div>
+      </section>
+
+      <section><div class="section-header"><span class="num">14</span><h2>决策检查点</h2></div><table><thead><tr><th>时间点</th><th>必答问题</th><th>继续条件</th></tr></thead><tbody><tr><td>阶段 0 结束</td><td>用户是否确实会反复使用计数与断点恢复？</td><td>高优痛点成立，且原型任务成功率达标</td></tr><tr><td>MVP 内测结束</td><td>用户是否在一周后回来继续同一项目？</td><td>首周留存/访谈结果支持投入效率层</td></tr><tr><td>v1.1 结束</td><td>个人资产功能是否提高留存或付费意愿？</td><td>有显著行为证据后再建设作者平台</td></tr><tr><td>作者试点结束</td><td>是否有稳定的内容供给与购买意向？</td><td>再扩展交易、结算与公开社区</td></tr></tbody></table></section>
 
       <section><div class="callout"><b>当前建议：</b>功能面足够进入试点了，先把剩下三件 P0 做完——CI 卡口、邮件触达、可观测与恢复演练。这四项补齐之前招种子用户，拿回来的反馈会混着基础设施故障的噪声，看不清产品本身。</div></section>
     </main>
-    <footer>线禾 · 钩织应用实施路线图 · 交付状态 2026.08 · 86 API / 26 表 / 21 迁移</footer>
+    <footer>线禾 · 钩织应用实施路线图 · 交付状态 2026.08 · 86 API / 26 表 / 21 迁移 · 4 项功能待排期</footer>
   </div>
 </body>
 </html>
